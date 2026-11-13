@@ -17,7 +17,9 @@ into the capture (macOS window capture excludes that GPU layer).*
 
 - Detects USB, Wi-Fi and emulator ADB targets automatically.
 - Mirrors several devices at once. Click a device in the sidebar to switch;
-  use **Device Wall** (`⌘2`) to see up to four live screens side by side.
+  use **Device Wall** (`⌘2`) to see up to six selected screens in a 3 × 2 wall.
+- A **Choose** picker controls exactly which devices appear in the wall. The
+  selection is remembered between launches; any subset from one to six works.
 - Hardware-decoded H.264 at 60 fps by default, with optional native resolution,
   Display/120 fps and 8–48 Mbps presets.
 - Full mouse control: tap, drag/swipe, scroll, right-click for Back and
@@ -113,8 +115,10 @@ swift test --filter IntegrationTests
 4. Drop files on the mirror. APKs install; everything else lands in the
    device's Download folder.
 5. Switch devices in the sidebar. Streams stay live, so switching is instant.
-6. Click **Device Wall** in the header (`⌘2`) to see all connected devices.
-   The selected device receives the control dock and file drops.
+6. Click **Device Wall** in the header (`⌘2`). Use **Choose** to pick exactly
+   which phones/emulators appear in the wall. Click any tile to make it active;
+   the active device receives the control dock and file drops. Right-click a
+   tile to focus it, restart its stream, or hide it from the wall.
 
 ### Keyboard
 

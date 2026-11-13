@@ -13,6 +13,11 @@ import AppKit
 public final class H264VideoDecoder {
     public let displayLayer: AVSampleBufferDisplayLayer
 
+    #if DEBUG
+    public var debugLabel = "?"
+    private var debugEnqueueCount = 0
+    #endif
+
     public var onFrameDecoded: (() -> Void)?
     public var onError: ((String) -> Void)?
     public var onSizeChanged: ((CGSize) -> Void)?
@@ -24,7 +29,7 @@ public final class H264VideoDecoder {
     private var needsKeyframe = false
     private var failed = false
     private let visibilityLock = NSLock()
-    private var displayAttached = false
+    private var displayAttached = true
     private var keyframeGate = true
     #if DEBUG
     private var decodeCount = 0
@@ -73,7 +78,7 @@ public final class H264VideoDecoder {
             rebuildFormatDescription()
         }
         #if DEBUG
-        print("[decoder] config nals=\(units.count) sps=\(sps?.count ?? 0) pps=\(pps.count) format=\(formatDescription != nil)")
+        print("[decoder \(debugLabel)] config nals=\(units.count) sps=\(sps?.count ?? 0) pps=\(pps.count) format=\(formatDescription != nil)")
         #endif
     }
 
@@ -155,7 +160,7 @@ public final class H264VideoDecoder {
             pts: pts
         ) else {
             #if DEBUG
-            print("[decoder] sample buffer creation failed key=\(isKeyFrame) bytes=\(avcc.count)")
+            print("[decoder \(debugLabel)] sample buffer creation failed key=\(isKeyFrame) bytes=\(avcc.count)")
             #endif
             return
         }
@@ -174,32 +179,14 @@ public final class H264VideoDecoder {
         displayLayer.enqueue(sampleBuffer)
         #if DEBUG
         decodeCount += 1
+        debugEnqueueCount = decodeCount
         if decodeCount <= 4 || decodeCount % 120 == 0 {
             print(
-                "[decoder] enqueue #\(decodeCount) key=\(isKeyFrame) bytes=\(avcc.count) " +
+                "[decoder \(debugLabel)] enqueue #\(decodeCount) key=\(isKeyFrame) bytes=\(avcc.count) " +
                 "status=\(displayLayer.status.rawValue) ready=\(displayLayer.isReadyForMoreMediaData) " +
                 "superlayer=\(displayLayer.superlayer != nil) bounds=\(displayLayer.bounds) " +
                 "error=\(displayLayer.error?.localizedDescription ?? "none")"
             )
-        }
-        if decodeCount == 1 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                guard let self else { return }
-                print("[decoder] after 1s status=\(self.displayLayer.status.rawValue) error=\(self.displayLayer.error?.localizedDescription ?? "none") ready=\(self.displayLayer.isReadyForMoreMediaData)")
-                self.captureDisplayedFrame()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                guard let self else { return }
-                print("[decoder] after 3s status=\(self.displayLayer.status.rawValue) ready=\(self.displayLayer.isReadyForMoreMediaData)")
-                self.captureDisplayedFrame()
-            }
-            for delay in [8.0, 13.0, 18.0] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    guard let self else { return }
-                    print("[decoder] after \(Int(delay))s status=\(self.displayLayer.status.rawValue) ready=\(self.displayLayer.isReadyForMoreMediaData)")
-                    self.captureDisplayedFrame(suffix: "-\(Int(delay))")
-                }
-            }
         }
         #endif
         onFrameDecoded?()
@@ -260,7 +247,7 @@ public final class H264VideoDecoder {
         guard status == noErr, let description else {
             formatDescription = nil
             #if DEBUG
-            print("[decoder] format creation failed status=\(status) sizes=\(sizes)")
+            print("[decoder \(debugLabel)] format creation failed status=\(status) sizes=\(sizes)")
             #endif
             onError?("VideoToolbox could not read this device's H.264 profile (\(status))")
             return
@@ -268,7 +255,7 @@ public final class H264VideoDecoder {
         formatDescription = description
         needsKeyframe = true
         #if DEBUG
-        print("[decoder] format ready sizes=\(sizes)")
+        print("[decoder \(debugLabel)] format ready sizes=\(sizes)")
         #endif
     }
 
@@ -325,6 +312,36 @@ public final class H264VideoDecoder {
         guard sampleStatus == noErr else { return nil }
         return sampleBuffer
     }
+
+    #if DEBUG
+    public func debugStatus() -> String {
+        var pixelHash: UInt64 = 0
+        var pixelSize = "none"
+        if #available(macOS 14.4, *) {
+            if let pixelBuffer = displayLayer.sampleBufferRenderer.displayedPixelBuffer() {
+                CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+                if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
+                    let width = CVPixelBufferGetWidth(pixelBuffer)
+                    let height = CVPixelBufferGetHeight(pixelBuffer)
+                    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                    let pointer = base.assumingMemoryBound(to: UInt8.self)
+                    pixelHash = 1469598103934665603
+                    for y in stride(from: 0, to: height, by: 12) {
+                        for x in stride(from: 0, to: min(bytesPerRow, width * 4), by: 97) {
+                            pixelHash = (pixelHash ^ UInt64(pointer[y * bytesPerRow + x])) &* 1099511628211
+                        }
+                    }
+                    pixelSize = "\(width)x\(height)"
+                }
+                CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+            }
+        }
+        visibilityLock.lock()
+        let attached = displayAttached
+        visibilityLock.unlock()
+        return "enq=\(debugEnqueueCount) status=\(displayLayer.status.rawValue) ready=\(displayLayer.isReadyForMoreMediaData) attached=\(attached) hash=\(String(pixelHash, radix: 16)) pixels=\(pixelSize)"
+    }
+    #endif
 
     #if DEBUG
     private func captureDisplayedFrame(suffix: String = "") {

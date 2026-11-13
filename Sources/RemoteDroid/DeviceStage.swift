@@ -346,16 +346,31 @@ struct DeviceWallView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let devices = model.readyDevices
+            let devices = model.wallDevices
             if devices.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "rectangle.grid.2x2")
+                VStack(spacing: 13) {
+                    Image(systemName: model.readyDevices.isEmpty ? "rectangle.grid.2x2" : "checklist")
                         .font(.system(size: 32, weight: .light))
                         .foregroundStyle(Theme.textFaint)
-                    Text("No devices to show")
-                        .font(.system(size: 15, weight: .medium))
+                    Text(model.readyDevices.isEmpty ? "No devices connected" : "Choose devices for the wall")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.text)
+                    Text(model.readyDevices.isEmpty
+                         ? "Connect a phone or start an emulator to begin."
+                         : "Select any of your \(model.readyDevices.count) connected devices. You can change this at any time.")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textMuted)
-                    LabelButton(symbol: "arrow.clockwise", label: "Refresh") { model.refreshNow() }
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(2)
+                        .frame(maxWidth: 360)
+                    HStack(spacing: 8) {
+                        if !model.readyDevices.isEmpty {
+                            LabelButton(symbol: "checklist", label: "Choose devices", prominent: true) {
+                                model.showWallPicker = true
+                            }
+                        }
+                        LabelButton(symbol: "arrow.clockwise", label: "Refresh") { model.refreshNow() }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if devices.count <= 4 {
@@ -366,6 +381,20 @@ struct DeviceWallView: View {
                             session: model.session(for: device.serial),
                             isActive: model.selectedSerial == device.serial
                         )
+                    }
+                }
+                .padding(16)
+            } else if devices.count <= 6 {
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+                let tileHeight = max(190, (proxy.size.height - 32 - 12) / 2)
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(devices) { device in
+                        WallTile(
+                            device: device,
+                            session: model.session(for: device.serial),
+                            isActive: model.selectedSerial == device.serial
+                        )
+                        .frame(height: tileHeight)
                     }
                 }
                 .padding(16)
@@ -415,6 +444,19 @@ private struct WallTile: View {
         .onTapGesture {
             model.selectDevice(device.serial)
         }
+        .contextMenu {
+            Button("Focus this device") {
+                model.selectDevice(device.serial)
+                model.setLayout(.single)
+            }
+            Button("Restart this stream") {
+                model.retrySession(for: device.serial)
+            }
+            Divider()
+            Button("Hide from Device Wall") {
+                model.toggleWallDevice(device.serial)
+            }
+        }
     }
 
     private var header: some View {
@@ -422,7 +464,7 @@ private struct WallTile: View {
             if activeStatusVisible {
                 StatusDot(color: Theme.success, pulsing: true)
             }
-            Text(device.displayName)
+            Text(device.wallLabel)
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
@@ -474,6 +516,41 @@ private struct WallTile: View {
     }
 }
 
+private struct CompactStreamErrorSurface: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 20, weight: .light))
+                .foregroundStyle(Theme.danger)
+            Text("Stream stopped")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text("The device connection ended.")
+                .font(.system(size: 8.5))
+                .foregroundStyle(Theme.textFaint)
+                .multilineTextAlignment(.center)
+            Button(action: retry) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("Retry")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Color(hex: 0x06100E))
+                .padding(.horizontal, 10)
+                .frame(height: 25)
+                .background(Capsule().fill(Theme.accent))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .help(message)
+    }
+}
+
 private struct WallStatus: View {
     @ObservedObject var session: ScrcpySession
     var body: some View {
@@ -484,10 +561,9 @@ private struct WallStatus: View {
                     .font(Theme.mono(8.5))
                     .foregroundStyle(Theme.textFaint)
             } else {
-                Text("LIVE")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(Theme.success.opacity(0.8))
+                Text("static")
+                    .font(Theme.mono(8.5))
+                    .foregroundStyle(Theme.textFaint)
             }
         case .connecting:
             Spinner(color: Theme.warning)
@@ -547,7 +623,7 @@ private struct WallSessionContent: View {
         case .connecting:
             ConnectingSurface(device: device, message: "Starting session")
         case .failed(let message):
-            StreamErrorSurface(message: message) {
+            CompactStreamErrorSurface(message: message) {
                 model.retrySession(for: device.serial)
             }
         case .idle:
@@ -611,5 +687,15 @@ struct PhoneBezel<Content: View>: View {
                 .clipShape(RoundedRectangle(cornerRadius: max(8, cornerRadius - bezel), style: .continuous))
                 .padding(bezel)
         }
+    }
+}
+
+
+private extension AndroidDevice {
+    var wallLabel: String {
+        if connection == .emulator, let port = serial.split(separator: "-").last {
+            return "\(displayName) \(port)"
+        }
+        return displayName
     }
 }

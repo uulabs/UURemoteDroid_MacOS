@@ -88,9 +88,8 @@ struct RemoteDroidApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
-                Button("Connect All Devices") {
-                    model.setLayout(.grid)
-                    model.connectAll()
+                Button("Select All Wall Devices") {
+                    model.selectAllWallDevices()
                 }
                 .disabled(model.readyDevices.count < 2)
             }

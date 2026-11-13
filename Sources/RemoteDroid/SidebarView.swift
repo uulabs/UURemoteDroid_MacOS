@@ -31,7 +31,7 @@ struct SidebarView: View {
                         emptyDevices
                     }
 
-                    if model.readyDevices.count > 1 {
+                    if !model.readyDevices.isEmpty {
                         openAllButton
                     }
                 }
@@ -111,12 +111,11 @@ struct SidebarView: View {
     private var openAllButton: some View {
         Button {
             model.setLayout(.grid)
-            model.connectAll()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "rectangle.grid.2x2")
                     .font(.system(size: 10.5, weight: .semibold))
-                Text("Show all \(model.readyDevices.count) devices")
+                Text(wallButtonTitle)
                     .font(.system(size: 10.5, weight: .medium))
                 Spacer()
                 Image(systemName: "arrow.right")
@@ -137,7 +136,19 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .padding(.top, 4)
-        .help("Mirror all connected devices in a grid")
+        .help("Open the device wall")
+    }
+
+    private var wallButtonTitle: String {
+        let selected = model.wallDevices.count
+        let ready = model.readyDevices.count
+        if selected == 0 {
+            return "Choose devices for the wall"
+        }
+        if selected == ready {
+            return "Device wall · all \(ready)"
+        }
+        return "Device wall · \(selected) of \(ready)"
     }
 
     private var emptyDevices: some View {

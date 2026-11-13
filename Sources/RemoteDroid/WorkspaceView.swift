@@ -142,10 +142,10 @@ private struct WorkspaceHeader: View {
                     .font(.system(size: 21, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
-                if model.layoutMode == .grid, !model.readyDevices.isEmpty {
+                if model.layoutMode == .grid {
                     Pill(
                         icon: "rectangle.grid.2x2",
-                        text: "\(model.readyDevices.count) DEVICES",
+                        text: "\(model.wallDevices.count) OF \(model.readyDevices.count) DEVICES",
                         color: Theme.indigo,
                         background: Theme.indigo.opacity(0.08)
                     )
@@ -172,7 +172,7 @@ private struct WorkspaceHeader: View {
 
     private var subtitle: String {
         if model.layoutMode == .grid {
-            return "Every connected device, mirrored side by side"
+            return "\(model.wallDevices.count) of \(model.readyDevices.count) selected · click a tile to control it"
         }
         guard let device = model.selectedDevice else {
             return "Choose a connected Android device to start"
@@ -197,6 +197,16 @@ private struct WorkspaceHeader: View {
                 set: { model.setLayout($0) }
             ))
 
+            if model.layoutMode == .grid {
+                LabelButton(symbol: "checklist", label: "Choose", prominent: false) {
+                    model.showWallPicker.toggle()
+                }
+                .popover(isPresented: $model.showWallPicker, arrowEdge: .bottom) {
+                    WallDevicePicker()
+                        .environmentObject(model)
+                }
+            }
+
             LabelButton(
                 symbol: "paperplane.fill",
                 label: "Send",
@@ -206,8 +216,10 @@ private struct WorkspaceHeader: View {
             }
             .disabled(model.selectedDevice?.isReady != true)
 
-            IconButton(symbol: "sidebar.right", help: "Toggle inspector", active: model.showInspector && model.layoutMode == .single) {
-                model.showInspector.toggle()
+            if model.layoutMode == .single {
+                IconButton(symbol: "sidebar.right", help: "Toggle inspector", active: model.showInspector) {
+                    model.showInspector.toggle()
+                }
             }
 
             IconButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Toggle full screen") {
@@ -429,5 +441,140 @@ private struct AuthorizationView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
+    }
+}
+
+
+// MARK: - Wall device picker
+
+struct WallDevicePicker: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Device Wall")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.text)
+                    Text("Choose the devices shown side by side")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.textFaint)
+                }
+                Spacer()
+                Pill(
+                    text: "\(model.wallDevices.count)/\(model.readyDevices.count)",
+                    color: Theme.accent,
+                    background: Theme.accent.opacity(0.08),
+                    monospaced: true
+                )
+            }
+
+            HStack(spacing: 7) {
+                Button("Select all") { model.selectAllWallDevices() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accent.opacity(0.08)))
+                Button("Clear") { model.clearWallDevices() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.035)))
+                Spacer()
+                Text("Up to six at a glance")
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(Theme.textFaint)
+            }
+
+            Rectangle().fill(Theme.stroke).frame(height: 1)
+
+            if model.readyDevices.isEmpty {
+                Text("No connected devices")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(model.readyDevices) { device in
+                            deviceRow(device)
+                        }
+                    }
+                }
+                .frame(maxHeight: 310)
+            }
+
+            Text("Selected devices keep a live mirror. Unselected devices stay connected but stop decoding until you add them.")
+                .font(.system(size: 8.5))
+                .foregroundStyle(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+        }
+        .padding(14)
+        .frame(width: 322)
+        .background(Theme.background)
+        .preferredColorScheme(.dark)
+    }
+
+    private func deviceRow(_ device: AndroidDevice) -> some View {
+        let selected = model.wallSerials.contains(device.serial)
+        return Button {
+            model.toggleWallDevice(device.serial)
+        } label: {
+            HStack(spacing: 9) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(selected ? Theme.accent : Color.white.opacity(0.035))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(selected ? Theme.accent : Theme.strokeStrong, lineWidth: 1)
+                        )
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color(hex: 0x06100E))
+                    }
+                }
+                .frame(width: 18, height: 18)
+
+                Image(systemName: device.connection == .emulator ? "display" : "iphone.gen3")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(selected ? Theme.accent : Theme.textFaint)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(device.displayName)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(selected ? Theme.text : Theme.textMuted)
+                        .lineLimit(1)
+                    Text("\(device.connection.label) · \(device.serial)")
+                        .font(Theme.mono(8))
+                        .foregroundStyle(Theme.textFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 4)
+                if model.isSessionLive(device.serial) {
+                    StatusDot(color: Theme.success, pulsing: true)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? Theme.accent.opacity(0.075) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(selected ? Theme.accent.opacity(0.15) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }

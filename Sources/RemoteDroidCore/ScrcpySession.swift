@@ -43,6 +43,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     private var reversePort: UInt16?
     private var serverLog = ""
     private var streamSize: CGSize = .zero
+    private var hasDisplayBeenAttached = false
 
     private var frameCounter = 0
     private var byteCounter = 0
@@ -62,6 +63,9 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         self.device = device
         self.configuration = configuration
         self.decoder = H264VideoDecoder()
+        #if DEBUG
+        decoder.debugLabel = "…\(device.serial.suffix(8))"
+        #endif
     }
 
     deinit {
@@ -381,14 +385,14 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
                         self.recordBytes(media.payload.count + 12)
                         if media.isConfig {
                             #if DEBUG
-                            print("[session] config packet \(media.payload.count) bytes")
+                            print("[session …\(self.device.serial.suffix(8))] config packet \(media.payload.count) bytes")
                             #endif
                             self.decoder.handleConfig(media.payload)
                         } else {
                             #if DEBUG
                             self.mediaPacketCount += 1
                             if self.mediaPacketCount <= 3 || self.mediaPacketCount % 120 == 0 {
-                                print("[session] media #\(self.mediaPacketCount) key=\(media.isKeyFrame) size=\(media.payload.count)")
+                                print("[session …\(self.device.serial.suffix(8))] media #\(self.mediaPacketCount) key=\(media.isKeyFrame) size=\(media.payload.count)")
                             }
                             #endif
                             self.decoder.handleFrame(
@@ -502,6 +506,9 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         let total = totalFrames
         counterLock.unlock()
         totalFrames = total
+        #if DEBUG
+        print("[stats …\(device.serial.suffix(8))] fps=\(Int(fps)) \(decoder.debugStatus())")
+        #endif
     }
 
     // MARK: - Input
@@ -519,8 +526,17 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     /// The SwiftUI surface became visible. Ask the device for a fresh IDR /
     /// encoder configuration so the first frame after switching is valid.
     public func displayWillAttach() {
+        #if DEBUG
+        print("[display] attach …\(device.serial.suffix(8))")
+        #endif
+        let isReattach = hasDisplayBeenAttached
+        hasDisplayBeenAttached = true
         decoder.setDisplayAttached(true)
-        if phase.isLive {
+        // The initial stream already starts with a config + keyframe. Only ask
+        // for a reset when returning to a surface that was previously detached
+        // and therefore had frames dropped. Resetting every stream on first
+        // attach adds startup churn, especially in a six-device wall.
+        if isReattach, phase.isLive {
             sendControl(ScrcpyControlMessage.resetVideo())
         }
     }
@@ -528,6 +544,9 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     /// The surface left the window. Keep the session alive for fast switching,
     /// but stop decoding into a layer that nobody can see.
     public func displayDidDetach() {
+        #if DEBUG
+        print("[display] detach …\(device.serial.suffix(8))")
+        #endif
         decoder.setDisplayAttached(false)
     }
 

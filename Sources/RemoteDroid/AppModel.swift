@@ -62,7 +62,6 @@ final class AppModel: ObservableObject {
         didSet { saveConfiguration() }
     }
     @Published var isRefreshing = false
-    @Published var isConnectingAll = false
     @Published var transfers: [TransferItem] = []
     @Published var toast: Toast?
     @Published var showSettings = false
@@ -74,6 +73,9 @@ final class AppModel: ObservableObject {
     @Published var installAPKsOnDrop = true {
         didSet { defaults.set(installAPKsOnDrop, forKey: Keys.installOnDrop) }
     }
+    /// Device serials selected for the side-by-side Device Wall.
+    @Published var wallSerials: Set<String> = []
+    @Published var showWallPicker = false
 
     private let defaults = UserDefaults.standard
     private var adb: ADBClient?
@@ -85,6 +87,7 @@ final class AppModel: ObservableObject {
     private var lastDetailRefresh: [String: Date] = [:]
     private var didInitialAutoConnect = false
     private var didRestoreGrid = false
+    private var hasStoredWallSelection = false
     private var storedADBPath: String?
     #if DEBUG
     private var didStartDebugGrid = false
@@ -101,6 +104,7 @@ final class AppModel: ObservableObject {
         static let maxFPS = "stream.maxFPS"
         static let bitRate = "stream.bitRate"
         static let keepAwake = "stream.keepAwake"
+        static let wallSerials = "wall.serials"
     }
 
     init() {
@@ -119,6 +123,10 @@ final class AppModel: ObservableObject {
         autoConnectOnLaunch = defaults.object(forKey: Keys.autoConnect) as? Bool ?? true
         installAPKsOnDrop = defaults.object(forKey: Keys.installOnDrop) as? Bool ?? true
         selectedSerial = defaults.string(forKey: Keys.selectedSerial)
+        if let storedWall = defaults.array(forKey: Keys.wallSerials) as? [String] {
+            wallSerials = Set(storedWall)
+            hasStoredWallSelection = true
+        }
         storedADBPath = defaults.string(forKey: Keys.adbPath)
         resolveADB()
         NotificationCenter.default.addObserver(
@@ -146,6 +154,11 @@ final class AppModel: ObservableObject {
 
     var readyDevices: [AndroidDevice] {
         devices.filter(\.isReady)
+    }
+
+    /// The devices explicitly chosen for the wall, in ADB order.
+    var wallDevices: [AndroidDevice] {
+        devices.filter { $0.isReady && wallSerials.contains($0.serial) }
     }
 
     var connectedSessionCount: Int {
@@ -258,6 +271,12 @@ final class AppModel: ObservableObject {
             devices = latest
             lastRefresh = now
 
+            if !hasStoredWallSelection, !readyDevices.isEmpty {
+                wallSerials = Set(readyDevices.map(\.serial))
+                hasStoredWallSelection = true
+                persistWallSelection()
+            }
+
             // Drop sessions for devices that disappeared or lost authorization.
             for (serial, session) in sessions {
                 if !latestSerials.contains(serial) || latest.first(where: { $0.serial == serial })?.isReady != true {
@@ -273,13 +292,16 @@ final class AppModel: ObservableObject {
             handleSelectionChange()
             if layoutMode == .grid, !didRestoreGrid, !readyDevices.isEmpty {
                 didRestoreGrid = true
-                ensureAllReadySessions()
+                ensureWallSessions()
+            }
+            if layoutMode == .grid {
+                selectActiveWallDeviceIfNeeded()
             }
             #if DEBUG
             if !didStartDebugGrid, ProcessInfo.processInfo.environment["UU_START_GRID"] == "1" {
                 didStartDebugGrid = true
                 setLayout(.grid)
-                connectAll()
+                ensureWallSessions()
             }
             #endif
         } catch {
@@ -292,6 +314,22 @@ final class AppModel: ObservableObject {
     }
 
     private func handleSelectionChange() {
+        if layoutMode == .grid {
+            if let selectedSerial, wallDevices.contains(where: { $0.serial == selectedSerial }) {
+                didInitialAutoConnect = true
+                return
+            }
+            let next = wallDevices.first?.serial
+            selectedSerial = next
+            if let next {
+                defaults.set(next, forKey: Keys.selectedSerial)
+            } else {
+                defaults.removeObject(forKey: Keys.selectedSerial)
+            }
+            didInitialAutoConnect = true
+            return
+        }
+
         if let selectedSerial,
            let device = devices.first(where: { $0.serial == selectedSerial }),
            device.isReady {
@@ -332,6 +370,12 @@ final class AppModel: ObservableObject {
         guard let device = devices.first(where: { $0.serial == serial }) else { return }
         selectedSerial = serial
         defaults.set(serial, forKey: Keys.selectedSerial)
+        if layoutMode == .grid, device.isReady {
+            wallSerials.insert(serial)
+            hasStoredWallSelection = true
+            persistWallSelection()
+            selectActiveWallDeviceIfNeeded()
+        }
         if device.isReady {
             if let existing = sessions[serial], case .failed = existing.phase {
                 existing.stop()
@@ -339,7 +383,7 @@ final class AppModel: ObservableObject {
             }
             ensureSession(for: device)
             if layoutMode == .grid {
-                ensureAllReadySessions()
+                ensureWallSessions()
             }
         }
     }
@@ -378,24 +422,75 @@ final class AppModel: ObservableObject {
         sessions.removeValue(forKey: serial)
     }
 
-    func connectAll() {
-        guard !isConnectingAll else { return }
-        isConnectingAll = true
-        let ready = readyDevices
-        Task {
-            for (index, device) in ready.enumerated() {
-                ensureSession(for: device)
-                if index < ready.count - 1 {
-                    try? await Task.sleep(nanoseconds: 180_000_000)
-                }
-            }
-            isConnectingAll = false
+    /// Starts only the streams selected for the wall. Hidden, unselected
+    /// streams are not created.
+    func ensureWallSessions() {
+        guard layoutMode == .grid else { return }
+        for device in wallDevices where sessions[device.serial] == nil {
+            ensureSession(for: device)
         }
     }
 
-    func ensureAllReadySessions() {
-        for device in readyDevices where sessions[device.serial] == nil {
-            ensureSession(for: device)
+    func toggleWallDevice(_ serial: String) {
+        guard let device = device(for: serial) else { return }
+        if wallSerials.contains(serial) {
+            wallSerials.remove(serial)
+            if layoutMode == .grid, selectedSerial == serial {
+                selectedSerial = wallDevices.first?.serial
+                if let selectedSerial {
+                    defaults.set(selectedSerial, forKey: Keys.selectedSerial)
+                } else {
+                    defaults.removeObject(forKey: Keys.selectedSerial)
+                }
+            }
+        } else {
+            wallSerials.insert(serial)
+            if device.isReady {
+                ensureSession(for: device)
+                if layoutMode == .grid {
+                    selectedSerial = serial
+                    defaults.set(serial, forKey: Keys.selectedSerial)
+                }
+            }
+        }
+        hasStoredWallSelection = true
+        persistWallSelection()
+    }
+
+    func selectAllWallDevices() {
+        wallSerials = Set(readyDevices.map(\.serial))
+        hasStoredWallSelection = true
+        persistWallSelection()
+        if layoutMode == .grid {
+            ensureWallSessions()
+            selectActiveWallDeviceIfNeeded()
+        }
+    }
+
+    func clearWallDevices() {
+        wallSerials.removeAll()
+        hasStoredWallSelection = true
+        persistWallSelection()
+        if layoutMode == .grid {
+            selectedSerial = nil
+            defaults.removeObject(forKey: Keys.selectedSerial)
+        }
+    }
+
+    private func persistWallSelection() {
+        defaults.set(Array(wallSerials), forKey: Keys.wallSerials)
+    }
+
+    private func selectActiveWallDeviceIfNeeded() {
+        guard layoutMode == .grid else { return }
+        if let selectedSerial, wallDevices.contains(where: { $0.serial == selectedSerial }) {
+            return
+        }
+        selectedSerial = wallDevices.first?.serial
+        if let selectedSerial {
+            defaults.set(selectedSerial, forKey: Keys.selectedSerial)
+        } else {
+            defaults.removeObject(forKey: Keys.selectedSerial)
         }
     }
 
@@ -424,7 +519,8 @@ final class AppModel: ObservableObject {
     func setLayout(_ mode: LayoutMode) {
         layoutMode = mode
         if mode == .grid {
-            ensureAllReadySessions()
+            selectActiveWallDeviceIfNeeded()
+            ensureWallSessions()
         }
     }
 
