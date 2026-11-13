@@ -41,6 +41,7 @@ final class RemoteScreenNSView: NSView {
     private var isPointerDown = false
     private var lastPoint: (x: Int, y: Int)?
     private var displayAttached = false
+    private let attachmentToken = UUID()
     private var windowObservers: [NSObjectProtocol] = []
     private var keyboardIsFocused = false
 
@@ -94,12 +95,12 @@ final class RemoteScreenNSView: NSView {
     func setSession(_ newSession: ScrcpySession) {
         guard session !== newSession else { return }
         if displayAttached {
-            session?.displayDidDetach()
+            session?.displayDidDetach(token: attachmentToken)
             displayAttached = false
         }
         session = newSession
         if window != nil {
-            newSession.displayWillAttach()
+            newSession.displayWillAttach(token: attachmentToken)
             displayAttached = true
         }
     }
@@ -111,15 +112,18 @@ final class RemoteScreenNSView: NSView {
         #endif
         observeFullScreenChanges()
         if window != nil, !displayAttached {
-            session?.displayWillAttach()
+            session?.displayWillAttach(token: attachmentToken)
             displayAttached = true
         } else if window == nil, displayAttached {
-            session?.displayDidDetach()
+            session?.displayDidDetach(token: attachmentToken)
             displayAttached = false
         }
     }
 
     deinit {
+        if displayAttached {
+            session?.displayDidDetach(token: attachmentToken)
+        }
         removeWindowObservers()
     }
 

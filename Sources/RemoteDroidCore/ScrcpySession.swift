@@ -49,6 +49,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     private var serverLog = ""
     private var streamSize: CGSize = .zero
     private var hasDisplayBeenAttached = false
+    private var displayAttachmentTokens: Set<UUID> = []
     private var lastDisplayRefresh = Date.distantPast
 
     private var frameCounter = 0
@@ -524,31 +525,37 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         sendControl(ScrcpyControlMessage.backOrScreenOn(action: .up))
     }
 
-    /// The SwiftUI surface became visible. Ask the device for a fresh IDR /
-    /// encoder configuration so the first frame after switching is valid.
-    public func displayWillAttach() {
-        #if DEBUG
-        print("[display] attach …\(device.serial.suffix(8))")
-        #endif
+    /// A session can briefly have two surfaces during a single <-> wall
+    /// transition: the replacement view is mounted before the old one is
+    /// removed. Track tokens so the old view's detach cannot turn decoding off
+    /// while the replacement surface is still on screen.
+    public func displayWillAttach(token: UUID) {
+        let hadSurface = !displayAttachmentTokens.isEmpty
         let isReattach = hasDisplayBeenAttached
+        displayAttachmentTokens.insert(token)
         hasDisplayBeenAttached = true
         decoder.setDisplayAttached(true)
-        // The initial stream already starts with a config + keyframe. Only ask
-        // for a reset when returning to a surface that was previously detached
-        // and therefore had frames dropped. Resetting every stream on first
-        // attach adds startup churn, especially in a six-device wall.
-        if isReattach, phase.isLive {
+        #if DEBUG
+        print("[display] attach …\(device.serial.suffix(8)) surfaces=\(displayAttachmentTokens.count)")
+        #endif
+        // A newly mounted surface during a live hand-off must not force an
+        // encoder reset; the existing decoder/layer is still producing frames.
+        // Only a genuine return from no surface needs a fresh keyframe.
+        if !hadSurface, isReattach, phase.isLive {
             sendControl(ScrcpyControlMessage.resetVideo())
         }
     }
 
     /// The surface left the window. Keep the session alive for fast switching,
-    /// but stop decoding into a layer that nobody can see.
-    public func displayDidDetach() {
+    /// but stop decoding only when the last visible surface is gone.
+    public func displayDidDetach(token: UUID) {
+        displayAttachmentTokens.remove(token)
         #if DEBUG
-        print("[display] detach …\(device.serial.suffix(8))")
+        print("[display] detach …\(device.serial.suffix(8)) surfaces=\(displayAttachmentTokens.count)")
         #endif
-        decoder.setDisplayAttached(false)
+        if displayAttachmentTokens.isEmpty {
+            decoder.setDisplayAttached(false)
+        }
     }
 
     /// A native window transition can leave a video layer composited against

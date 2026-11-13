@@ -203,6 +203,9 @@ source, icon, bundled scrcpy server and license are versioned.
   of scope.
 - Clipboard sync is text-only. It covers Mac ↔ device and device ↔ device while enabled;
   images and file contents are not transferred.
+- Moving between single-device mode and the wall keeps a reference on every
+  visible video surface, so the outgoing view cannot pause a stream whose
+  replacement view is already on screen.
 - `adb` is not bundled; Android platform-tools must already be installed.
 - The ad-hoc signature is fine locally. Sharing outside this Mac requires
   Developer ID signing and notarisation.

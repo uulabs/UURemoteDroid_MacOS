@@ -38,6 +38,15 @@ struct RootView: View {
         }
         .task {
             model.startMonitoring()
+            #if DEBUG
+            if let raw = ProcessInfo.processInfo.environment["UU_WALL_AFTER"],
+               let delay = Double(raw) {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                model.wallSerials = Set(model.readyDevices.map(\.serial))
+                model.setLayout(.grid)
+                print("[debug] switched to wall with \(model.wallSerials.count) devices")
+            }
+            #endif
         }
     }
 }
