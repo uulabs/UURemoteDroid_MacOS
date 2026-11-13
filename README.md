@@ -20,6 +20,8 @@ into the capture (macOS window capture excludes that GPU layer).*
   use **Device Wall** (`⌘2`) to see up to six selected screens in a 3 × 2 wall.
 - A **Choose** picker controls exactly which devices appear in the wall. The
   selection is remembered between launches; any subset from one to six works.
+- Drag a wall tile by its header grip to reorder devices left-to-right. The
+  order is remembered; right-click a tile for **Move left** / **Move right**.
 - Hardware-decoded H.264 at 60 fps by default, with optional native resolution,
   Display/120 fps and 8–48 Mbps presets.
 - Full mouse control: tap, drag/swipe, scroll, right-click for Back and
@@ -120,8 +122,9 @@ swift test --filter IntegrationTests
 5. Switch devices in the sidebar. Streams stay live, so switching is instant.
 6. Click **Device Wall** in the header (`⌘2`). Use **Choose** to pick exactly
    which phones/emulators appear in the wall. Click any tile to make it active;
-   the active device receives the control dock and file drops. Right-click a
-   tile to focus it, restart its stream, or hide it from the wall.
+   the active device receives the control dock and file drops. Drag the tile
+   header (the grip beside the device name) to reorder them; the order persists.
+   Right-click a tile to focus it, restart its stream, move it, or hide it.
 7. Clipboard sync is on by default. Text copied on any mirrored device updates
    the Mac clipboard and every other live device; text copied on the Mac is
    pushed to all live devices. Turn it off in **Settings → Clipboard**. Only

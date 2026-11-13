@@ -88,6 +88,9 @@ final class AppModel: ObservableObject {
     }
     /// Device serials selected for the side-by-side Device Wall.
     @Published var wallSerials: Set<String> = []
+    /// Explicit left-to-right wall order. It may contain a selected serial
+    /// while that device is temporarily disconnected.
+    @Published var wallOrder: [String] = []
     @Published var showWallPicker = false
 
     private let defaults = UserDefaults.standard
@@ -122,6 +125,7 @@ final class AppModel: ObservableObject {
         static let bitRate = "stream.bitRate"
         static let keepAwake = "stream.keepAwake"
         static let wallSerials = "wall.serials"
+        static let wallOrder = "wall.order"
         static let clipboardSync = "clipboard.sync"
     }
 
@@ -147,6 +151,9 @@ final class AppModel: ObservableObject {
         if let storedWall = defaults.array(forKey: Keys.wallSerials) as? [String] {
             wallSerials = Set(storedWall)
             hasStoredWallSelection = true
+        }
+        if let storedOrder = defaults.array(forKey: Keys.wallOrder) as? [String] {
+            wallOrder = storedOrder
         }
         storedADBPath = defaults.string(forKey: Keys.adbPath)
         resolveADB()
@@ -177,9 +184,25 @@ final class AppModel: ObservableObject {
         devices.filter(\.isReady)
     }
 
-    /// The devices explicitly chosen for the wall, in ADB order.
+    /// The devices explicitly chosen for the wall, in the user's saved
+    /// left-to-right order. Selected devices missing from the order (for
+    /// example after a fresh selection) fall back to ADB order at the end.
     var wallDevices: [AndroidDevice] {
-        devices.filter { $0.isReady && wallSerials.contains($0.serial) }
+        let readyBySerial = Dictionary(
+            uniqueKeysWithValues: devices.filter(\.isReady).map { ($0.serial, $0) }
+        )
+        var result: [AndroidDevice] = []
+        var seen: Set<String> = []
+        for serial in wallOrder where wallSerials.contains(serial) {
+            guard let device = readyBySerial[serial], seen.insert(serial).inserted else { continue }
+            result.append(device)
+        }
+        for device in devices where device.isReady && wallSerials.contains(device.serial) {
+            if seen.insert(device.serial).inserted {
+                result.append(device)
+            }
+        }
+        return result
     }
 
     var connectedSessionCount: Int {
@@ -512,8 +535,43 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func normalizedWallOrder() -> [String] {
+        var seen: Set<String> = []
+        var ordered = wallOrder.filter { serial in
+            wallSerials.contains(serial) && seen.insert(serial).inserted
+        }
+        for device in devices where wallSerials.contains(device.serial) {
+            if seen.insert(device.serial).inserted {
+                ordered.append(device.serial)
+            }
+        }
+        return ordered
+    }
+
     private func persistWallSelection() {
+        let ordered = normalizedWallOrder()
+        wallOrder = ordered
         defaults.set(Array(wallSerials), forKey: Keys.wallSerials)
+        defaults.set(ordered, forKey: Keys.wallOrder)
+    }
+
+    /// Places a dragged tile in the slot currently occupied by `target`.
+    func moveWallDevice(_ serial: String, toSlotOf target: String) {
+        guard wallSerials.contains(serial), wallSerials.contains(target), serial != target else { return }
+        let order = normalizedWallOrder()
+        let next = WallOrder.moving(order, serial: serial, toSlotOf: target)
+        guard next != order else { return }
+        wallOrder = next
+        defaults.set(next, forKey: Keys.wallOrder)
+    }
+
+    /// Precise keyboard/context-menu fallback for drag reordering.
+    func moveWallDevice(_ serial: String, by offset: Int) {
+        let visible = wallDevices.map(\.serial)
+        guard let index = visible.firstIndex(of: serial) else { return }
+        let destination = min(max(index + offset, 0), visible.count - 1)
+        guard destination != index else { return }
+        moveWallDevice(serial, toSlotOf: visible[destination])
     }
 
     private func selectActiveWallDeviceIfNeeded() {

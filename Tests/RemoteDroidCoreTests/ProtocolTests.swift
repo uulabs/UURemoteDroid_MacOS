@@ -131,6 +131,21 @@ final class ProtocolTests: XCTestCase {
         ]))
     }
 
+    func testWallOrderMovesIntoDropTargetSlot() {
+        let initial = ["A", "B", "C", "D"]
+        XCTAssertEqual(WallOrder.moving(initial, serial: "A", toSlotOf: "C"), ["B", "C", "A", "D"])
+        XCTAssertEqual(WallOrder.moving(initial, serial: "D", toSlotOf: "B"), ["A", "D", "B", "C"])
+        XCTAssertEqual(WallOrder.moving(initial, serial: "A", toSlotOf: "D"), ["B", "C", "D", "A"])
+        XCTAssertEqual(WallOrder.moving(initial, serial: "D", toSlotOf: "A"), ["D", "A", "B", "C"])
+    }
+
+    func testWallOrderIgnoresSelfAndUnknownDevices() {
+        let initial = ["A", "B", "C"]
+        XCTAssertEqual(WallOrder.moving(initial, serial: "B", toSlotOf: "B"), initial)
+        XCTAssertEqual(WallOrder.moving(initial, serial: "X", toSlotOf: "A"), initial)
+        XCTAssertEqual(WallOrder.moving(initial, serial: "A", toSlotOf: "X"), initial)
+    }
+
     func testSetClipboardMessageWireFormat() {
         let data = ScrcpyControlMessage.setClipboard(
             text: "hi",

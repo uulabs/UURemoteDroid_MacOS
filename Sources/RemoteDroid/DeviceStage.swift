@@ -1,5 +1,7 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+import CoreTransferable
 import RemoteDroidCore
 
 // MARK: - Single-device stage
@@ -422,12 +424,31 @@ private struct WallTile: View {
     let device: AndroidDevice
     let session: ScrcpySession?
     let isActive: Bool
+    @State private var isDropTarget = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
+                .contentShape(Rectangle())
+                .help("Drag this header left or right to reorder the wall")
+                .draggable(WallDragPayload(serial: device.serial)) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(device.wallLabel)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Theme.panel)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent.opacity(0.5), lineWidth: 1))
+                    )
+                }
             content
         }
         .background(
@@ -440,9 +461,25 @@ private struct WallTile: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: Color.black.opacity(0.18), radius: 12, y: 8)
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(isDropTarget ? Theme.accent : Color.clear, lineWidth: 2)
+                .allowsHitTesting(false)
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             model.selectDevice(device.serial)
+        }
+        .dropDestination(for: WallDragPayload.self) { payloads, _ in
+            guard let payload = payloads.first else { return false }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                model.moveWallDevice(payload.serial, toSlotOf: device.serial)
+            }
+            return true
+        } isTargeted: { targeted in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isDropTarget = targeted
+            }
         }
         .contextMenu {
             Button("Focus this device") {
@@ -453,14 +490,35 @@ private struct WallTile: View {
                 model.retrySession(for: device.serial)
             }
             Divider()
+            Button("Move left") {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    model.moveWallDevice(device.serial, by: -1)
+                }
+            }
+            .disabled(wallIndex <= 0)
+            Button("Move right") {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    model.moveWallDevice(device.serial, by: 1)
+                }
+            }
+            .disabled(wallIndex >= model.wallDevices.count - 1)
+            Divider()
             Button("Hide from Device Wall") {
                 model.toggleWallDevice(device.serial)
             }
         }
     }
 
+    private var wallIndex: Int {
+        model.wallDevices.firstIndex(where: { $0.serial == device.serial }) ?? 0
+    }
+
     private var header: some View {
         HStack(spacing: 7) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+                .help("Drag to reorder")
             if activeStatusVisible {
                 StatusDot(color: Theme.success, pulsing: true)
             }
@@ -698,4 +756,17 @@ private extension AndroidDevice {
         }
         return displayName
     }
+}
+
+
+private struct WallDragPayload: Codable, Transferable {
+    let serial: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .remoteDroidWallDevice)
+    }
+}
+
+private extension UTType {
+    static let remoteDroidWallDevice = UTType(exportedAs: "au.com.uulabs.remotedroid.wall-device")
 }

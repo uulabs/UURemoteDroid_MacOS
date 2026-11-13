@@ -46,6 +46,15 @@ struct RootView: View {
                 model.setLayout(.grid)
                 print("[debug] switched to wall with \(model.wallSerials.count) devices")
             }
+            if let raw = ProcessInfo.processInfo.environment["UU_REORDER_WALL_AFTER"],
+               let delay = Double(raw) {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                let before = model.wallDevices.map(\.serial)
+                if let first = before.first, let last = before.last, first != last {
+                    model.moveWallDevice(first, toSlotOf: last)
+                }
+                print("[debug] wall order before=\(before) after=\(model.wallDevices.map(\.serial))")
+            }
             #endif
         }
     }
