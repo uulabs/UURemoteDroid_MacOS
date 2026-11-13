@@ -131,6 +131,16 @@ final class ProtocolTests: XCTestCase {
         ]))
     }
 
+    func testSamsungSafeServerCommandLength() {
+        let command = ScrcpyCommand.serverCommand(scid: 0x1234_5678, configuration: .balanced)
+        XCTAssertLessThan(command.utf8.count, 256)
+        XCTAssertTrue(command.contains("audio=false"))
+        XCTAssertTrue(command.contains("send_device_meta=false"))
+        XCTAssertTrue(command.contains("max_size=1920"))
+        XCTAssertFalse(command.contains("send_dummy_byte"))
+        XCTAssertFalse(command.contains("clipboard_autosync"))
+    }
+
     func testBladeConfigParameterSets() {
         let hex = "0000000167428029e90120122484040404161108d40000000168ce3c80"
         let data = Data(hexString: hex)

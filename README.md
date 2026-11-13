@@ -208,6 +208,10 @@ source, icon, bundled scrcpy server and license are versioned.
 - If a stream ever stalls, use the **More** menu → **Refresh video** (or
   right-click a wall tile → **Restart this stream**). These request a new
   encoder config/keyframe without dropping the device session.
+- Some Samsung firmware (notably One UI 7 / Android 15) aborts the scrcpy
+  server when its `app_process` command line exceeds roughly 255 bytes. The
+  server command is intentionally compact (currently 221 bytes at the default
+  1080p/60/24 Mbps settings) and a regression test guards that limit.
 
 ## Credits
 

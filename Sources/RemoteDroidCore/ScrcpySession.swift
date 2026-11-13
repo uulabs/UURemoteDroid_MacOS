@@ -331,33 +331,14 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     }
 
     private func serverCommand(scid: UInt32) -> String {
-        var parts = [
-            "CLASSPATH=\(ScrcpyServer.remotePath)",
-            "app_process",
-            "/",
-            "com.genymobile.scrcpy.Server",
-            ScrcpyServer.version,
-            "scid=\(String(format: "%08x", scid))",
-            "log_level=info",
-            "audio=false",
-            "send_device_meta=false",
-            "send_dummy_byte=false",
-            "cleanup=true",
-            "control=true",
-            "video_codec=h264",
-            "video_bit_rate=\(configuration.bitRate)",
-            "clipboard_autosync=false",
-        ]
-        if configuration.maxSize > 0 {
-            parts.append("max_size=\(configuration.maxSize)")
+        let command = ScrcpyCommand.serverCommand(scid: scid, configuration: configuration)
+        #if DEBUG
+        print("[session] server command length=\(command.utf8.count) (\(ScrcpyServer.version))")
+        if command.utf8.count >= 256 {
+            print("[session] WARNING: command line is over Samsung's safe 255-byte limit")
         }
-        if configuration.maxFPS > 0 {
-            parts.append("max_fps=\(configuration.maxFPS)")
-        }
-        if configuration.keepAwake {
-            parts.append("stay_awake=true")
-        }
-        return parts.joined(separator: " ")
+        #endif
+        return command
     }
 
     // MARK: - Readers
