@@ -41,6 +41,7 @@ final class RemoteScreenNSView: NSView {
     private var isPointerDown = false
     private var lastPoint: (x: Int, y: Int)?
     private var displayAttached = false
+    private var windowObservers: [NSObjectProtocol] = []
     private var keyboardIsFocused = false
 
     override init(frame frameRect: NSRect) {
@@ -63,12 +64,20 @@ final class RemoteScreenNSView: NSView {
     override var isOpaque: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    private var lastLoggedBounds: CGRect = .zero
+
     override func layout() {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         displayLayer?.frame = bounds
         CATransaction.commit()
+        #if DEBUG
+        if !bounds.equalTo(lastLoggedBounds) {
+            lastLoggedBounds = bounds
+            print("[display-view] layout bounds=\(bounds) layerFrame=\(displayLayer?.frame ?? .zero)")
+        }
+        #endif
     }
 
     func attach(displayLayer newLayer: AVSampleBufferDisplayLayer) {
@@ -97,6 +106,10 @@ final class RemoteScreenNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        #if DEBUG
+        print("[display-view] viewDidMoveToWindow window=\(window?.windowNumber ?? -1) bounds=\(bounds) attached=\(displayAttached)")
+        #endif
+        observeFullScreenChanges()
         if window != nil, !displayAttached {
             session?.displayWillAttach()
             displayAttached = true
@@ -104,6 +117,55 @@ final class RemoteScreenNSView: NSView {
             session?.displayDidDetach()
             displayAttached = false
         }
+    }
+
+    deinit {
+        removeWindowObservers()
+    }
+
+    private func observeFullScreenChanges() {
+        removeWindowObservers()
+        guard let window else { return }
+        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            let token = NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] notification in
+                #if DEBUG
+                print("[display-view] fullscreen event \(notification.name.rawValue)")
+                #endif
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    self?.refreshSurfaceAfterWindowTransition()
+                }
+            }
+            windowObservers.append(token)
+        }
+    }
+
+    private func removeWindowObservers() {
+        windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowObservers.removeAll()
+    }
+
+    private func refreshSurfaceAfterWindowTransition() {
+        guard window != nil else { return }
+        lastLoggedBounds = .zero
+        // Reparent the layer so the new fullscreen window gets a fresh
+        // compositing surface, then ask the session for a fresh keyframe.
+        if let layer = displayLayer {
+            layer.removeFromSuperlayer()
+        }
+        layoutSubtreeIfNeeded()
+        if let layer = displayLayer {
+            layer.frame = bounds
+            self.layer?.addSublayer(layer)
+        }
+        session?.refreshDisplaySurface()
+        window?.makeFirstResponder(self)
+        #if DEBUG
+        print("[display-view] refreshed surface bounds=\(bounds)")
+        #endif
     }
 
     override func becomeFirstResponder() -> Bool {

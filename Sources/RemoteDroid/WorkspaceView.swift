@@ -234,6 +234,9 @@ private struct WorkspaceHeader: View {
                     model.captureScreenshot()
                 }
                 Divider()
+                Button("Refresh video") {
+                    model.activeSession?.refreshDisplaySurface()
+                }
                 Button("Restart stream") {
                     if let serial = model.selectedSerial {
                         model.retrySession(for: serial)

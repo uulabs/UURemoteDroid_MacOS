@@ -44,6 +44,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     private var serverLog = ""
     private var streamSize: CGSize = .zero
     private var hasDisplayBeenAttached = false
+    private var lastDisplayRefresh = Date.distantPast
 
     private var frameCounter = 0
     private var byteCounter = 0
@@ -548,6 +549,22 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         print("[display] detach …\(device.serial.suffix(8))")
         #endif
         decoder.setDisplayAttached(false)
+    }
+
+    /// A native window transition can leave a video layer composited against
+    /// stale window state even though frames are still being decoded. Flush the
+    /// layer and ask scrcpy for a new IDR/config so fullscreen resumes cleanly.
+    public func refreshDisplaySurface() {
+        let now = Date()
+        guard now.timeIntervalSince(lastDisplayRefresh) > 0.8 else { return }
+        lastDisplayRefresh = now
+        decoder.flushForDisplayRefresh()
+        if phase.isLive {
+            sendControl(ScrcpyControlMessage.resetVideo())
+        }
+        #if DEBUG
+        print("[display] refresh surface …\(device.serial.suffix(8))")
+        #endif
     }
 
     public func pressHome() { press(AndroidKey.home) }

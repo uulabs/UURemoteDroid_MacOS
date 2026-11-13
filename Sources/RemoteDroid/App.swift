@@ -50,6 +50,9 @@ struct RemoteDroidApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Open Notifications") { model.activeSession?.expandNotifications() }
                 Divider()
+                Button("Refresh Video") {
+                    model.activeSession?.refreshDisplaySurface()
+                }
                 Button("Restart Stream") {
                     if let serial = model.selectedSerial {
                         model.retrySession(for: serial)
@@ -113,6 +116,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         #if DEBUG
         DebugCapture.scheduleIfNeeded()
+        if let raw = ProcessInfo.processInfo.environment["UU_FULLSCREEN_AFTER"],
+           let delay = Double(raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) {
+                    print("[fullscreen] toggling window \(window.windowNumber)")
+                    window.toggleFullScreen(nil)
+                }
+            }
+        }
         #endif
     }
 

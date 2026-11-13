@@ -202,6 +202,12 @@ source, icon, bundled scrcpy server and license are versioned.
   sockets.
 - If the device drops off while a session is live, the error banner includes the
   last scrcpy server log lines. Retry after reconnecting.
+- Entering/exiting native fullscreen triggers an automatic display-layer refresh
+  and a fresh keyframe so the fullscreen surface resumes drawing. Keyboard focus
+  is returned to the viewer at the same time.
+- If a stream ever stalls, use the **More** menu → **Refresh video** (or
+  right-click a wall tile → **Restart this stream**). These request a new
+  encoder config/keyframe without dropping the device session.
 
 ## Credits
 

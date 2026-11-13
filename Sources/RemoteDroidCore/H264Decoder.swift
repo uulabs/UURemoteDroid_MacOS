@@ -29,6 +29,7 @@ public final class H264VideoDecoder {
     private var needsKeyframe = false
     private var failed = false
     private let visibilityLock = NSLock()
+    private let layerLock = NSLock()
     private var displayAttached = true
     private var keyframeGate = true
     #if DEBUG
@@ -176,7 +177,9 @@ public final class H264VideoDecoder {
                 dictionary[kCMSampleAttachmentKey_DisplayImmediately as String] = kCFBooleanTrue
             }
         }
+        layerLock.lock()
         displayLayer.enqueue(sampleBuffer)
+        layerLock.unlock()
         #if DEBUG
         decodeCount += 1
         debugEnqueueCount = decodeCount
@@ -198,7 +201,9 @@ public final class H264VideoDecoder {
     }
 
     private func resetDecoder(clearParameterSets: Bool) {
+        layerLock.lock()
         displayLayer.flushAndRemoveImage()
+        layerLock.unlock()
         formatDescription = nil
         needsKeyframe = true
         failed = false
@@ -311,6 +316,19 @@ public final class H264VideoDecoder {
         )
         guard sampleStatus == noErr else { return nil }
         return sampleBuffer
+    }
+
+    /// Forces the current display layer back to a clean state after a window
+    /// transition (notably macOS fullscreen). The caller should also request a
+    /// fresh keyframe from the device.
+    public func flushForDisplayRefresh() {
+        visibilityLock.lock()
+        keyframeGate = true
+        displayAttached = true
+        visibilityLock.unlock()
+        layerLock.lock()
+        displayLayer.flushAndRemoveImage()
+        layerLock.unlock()
     }
 
     #if DEBUG
