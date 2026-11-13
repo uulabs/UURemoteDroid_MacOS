@@ -73,6 +73,19 @@ final class AppModel: ObservableObject {
     @Published var installAPKsOnDrop = true {
         didSet { defaults.set(installAPKsOnDrop, forKey: Keys.installOnDrop) }
     }
+    /// Shares plain-text clipboard content between the Mac and every live
+    /// device. Defaults on; it can be disabled for privacy.
+    @Published var clipboardSyncEnabled = true {
+        didSet {
+            defaults.set(clipboardSyncEnabled, forKey: Keys.clipboardSync)
+            guard clipboardSyncEnabled else { return }
+            lastPasteboardChangeCount = NSPasteboard.general.changeCount
+            if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
+                lastSyncedClipboard = text
+                broadcastClipboard(text)
+            }
+        }
+    }
     /// Device serials selected for the side-by-side Device Wall.
     @Published var wallSerials: Set<String> = []
     @Published var showWallPicker = false
@@ -89,6 +102,10 @@ final class AppModel: ObservableObject {
     private var didRestoreGrid = false
     private var hasStoredWallSelection = false
     private var storedADBPath: String?
+    private var clipboardTimer: Timer?
+    private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
+    private var lastSyncedClipboard: String?
+    private var recentClipboardWrites: [String: (text: String, at: Date)] = [:]
     #if DEBUG
     private var didStartDebugGrid = false
     #endif
@@ -105,6 +122,7 @@ final class AppModel: ObservableObject {
         static let bitRate = "stream.bitRate"
         static let keepAwake = "stream.keepAwake"
         static let wallSerials = "wall.serials"
+        static let clipboardSync = "clipboard.sync"
     }
 
     init() {
@@ -122,7 +140,10 @@ final class AppModel: ObservableObject {
         showInspector = defaults.object(forKey: Keys.showInspector) as? Bool ?? true
         autoConnectOnLaunch = defaults.object(forKey: Keys.autoConnect) as? Bool ?? true
         installAPKsOnDrop = defaults.object(forKey: Keys.installOnDrop) as? Bool ?? true
+        clipboardSyncEnabled = defaults.object(forKey: Keys.clipboardSync) as? Bool ?? true
         selectedSerial = defaults.string(forKey: Keys.selectedSerial)
+        lastSyncedClipboard = NSPasteboard.general.string(forType: .string)
+        lastPasteboardChangeCount = NSPasteboard.general.changeCount
         if let storedWall = defaults.array(forKey: Keys.wallSerials) as? [String] {
             wallSerials = Set(storedWall)
             hasStoredWallSelection = true
@@ -194,6 +215,7 @@ final class AppModel: ObservableObject {
 
     func startMonitoring() {
         guard monitorTask == nil else { return }
+        startClipboardMonitor()
         monitorTask = Task { [weak self] in
             guard let self else { return }
             await self.refresh(showSpinner: false)
@@ -208,6 +230,8 @@ final class AppModel: ObservableObject {
     func stopMonitoring() {
         monitorTask?.cancel()
         monitorTask = nil
+        clipboardTimer?.invalidate()
+        clipboardTimer = nil
     }
 
     func refreshNow() {
@@ -404,6 +428,17 @@ final class AppModel: ObservableObject {
             return
         }
         let session = ScrcpySession(adb: adb, device: device, configuration: configuration)
+        session.onClipboardText = { [weak self] text in
+            Task { @MainActor [weak self] in
+                self?.handleDeviceClipboard(text, from: device.serial)
+            }
+        }
+        session.onLive = { [weak self, weak session] in
+            Task { @MainActor [weak self, weak session] in
+                guard let self, let session else { return }
+                self.pushClipboardToNewSession(session)
+            }
+        }
         sessions[device.serial] = session
         session.start()
     }
@@ -508,6 +543,8 @@ final class AppModel: ObservableObject {
     func stopAll() {
         monitorTask?.cancel()
         monitorTask = nil
+        clipboardTimer?.invalidate()
+        clipboardTimer = nil
         sessions.values.forEach { $0.stop() }
         sessions.removeAll()
         transferWorker?.cancel()
@@ -747,11 +784,94 @@ final class AppModel: ObservableObject {
 
     // MARK: - Clipboard
 
+    /// The Mac clipboard is the hub: a copy on any device updates the Mac and
+    /// every other live device, and a copy on the Mac updates every live device.
+    private func startClipboardMonitor() {
+        guard clipboardTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.6, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pollHostClipboard()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        clipboardTimer = timer
+    }
+
+    private func pollHostClipboard() {
+        guard clipboardSyncEnabled else { return }
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.changeCount != lastPasteboardChangeCount else { return }
+        lastPasteboardChangeCount = pasteboard.changeCount
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
+            lastSyncedClipboard = nil
+            return
+        }
+        guard text != lastSyncedClipboard else { return }
+        lastSyncedClipboard = text
+        broadcastClipboard(text)
+    }
+
+    private func handleDeviceClipboard(_ text: String, from serial: String) {
+        guard clipboardSyncEnabled, !text.isEmpty else { return }
+        // The server sends a clipboard notification for the clipboard write we
+        // just requested. Those asynchronous echoes must not overwrite a newer
+        // local copy from another device or the host.
+        guard !isRecentClipboardWrite(text, from: serial) else { return }
+        guard text != lastSyncedClipboard else { return }
+        lastSyncedClipboard = text
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        _ = pasteboard.setString(text, forType: .string)
+        lastPasteboardChangeCount = pasteboard.changeCount
+
+        broadcastClipboard(text, excluding: serial)
+        if let device = device(for: serial) {
+            showToast(
+                icon: "doc.on.clipboard.fill",
+                title: "Clipboard from \(device.displayName)",
+                detail: "Mac clipboard updated",
+                isError: false
+            )
+        }
+    }
+
+    private func broadcastClipboard(_ text: String, excluding serial: String? = nil) {
+        guard clipboardSyncEnabled else { return }
+        for (sessionSerial, session) in sessions
+        where sessionSerial != serial && session.phase.isLive {
+            session.setClipboard(text)
+            noteClipboardWrite(text, to: sessionSerial)
+        }
+    }
+
+    private func pushClipboardToNewSession(_ session: ScrcpySession) {
+        guard clipboardSyncEnabled else { return }
+        guard sessions[session.device.serial] === session else { return }
+        guard let text = lastSyncedClipboard ?? NSPasteboard.general.string(forType: .string),
+              !text.isEmpty else { return }
+        session.setClipboard(text)
+        noteClipboardWrite(text, to: session.device.serial)
+    }
+
+    private func noteClipboardWrite(_ text: String, to serial: String) {
+        let cutoff = Date().addingTimeInterval(-4)
+        recentClipboardWrites = recentClipboardWrites.filter { $0.value.at > cutoff }
+        recentClipboardWrites[serial] = (text, Date())
+    }
+
+    private func isRecentClipboardWrite(_ text: String, from serial: String) -> Bool {
+        guard let entry = recentClipboardWrites[serial] else { return false }
+        return entry.text == text && Date().timeIntervalSince(entry.at) < 4
+    }
+
     func pasteClipboard(into session: ScrcpySession) {
         guard let string = NSPasteboard.general.string(forType: .string), !string.isEmpty else {
             showToast(icon: "doc.on.clipboard", title: "Clipboard is empty", detail: nil, isError: false)
             return
         }
+        session.setClipboard(string)
+        noteClipboardWrite(string, to: session.device.serial)
         session.paste(string)
         showToast(icon: "doc.on.clipboard.fill", title: "Pasted to device", detail: "\(string.count) characters", isError: false)
     }

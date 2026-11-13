@@ -24,6 +24,11 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     @Published public private(set) var totalFrames: UInt64 = 0
     @Published public private(set) var transportError: String?
 
+    /// Called on the main thread when the device changes its clipboard.
+    public var onClipboardText: ((String) -> Void)?
+    /// Called on the main thread once video metadata is available.
+    public var onLive: (() -> Void)?
+
     public var displayLayer: AVSampleBufferDisplayLayer { decoder.displayLayer }
 
     private let adb: ADBClient
@@ -402,7 +407,20 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
             guard let self else { return }
             while self.isActive(run) {
                 do {
-                    _ = try SocketIO.readSome(fd: fd)
+                    let message = try ScrcpyDeviceMessageReader.readNext(fd: fd)
+                    switch message {
+                    case .clipboard(let text):
+                        #if DEBUG
+                        print("[clipboard] received \(text.count) chars from \(self.device.serial)")
+                        #endif
+                        DispatchQueue.main.async { [weak self] in
+                            self?.onClipboardText?(text)
+                        }
+                    case .clipboardAck:
+                        break
+                    case .uhidOutput:
+                        break
+                    }
                 } catch {
                     // The control channel ending normally accompanies video
                     // teardown. The video reader owns the error surface.
@@ -422,6 +440,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
                 #if DEBUG
                 print("[session] live \(self.device.serial) \(Int(self.videoSize.width))x\(Int(self.videoSize.height))")
                 #endif
+                self.onLive?()
             }
         }
     }
@@ -569,6 +588,37 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
 
     public func paste(_ text: String) {
         sendText(text)
+    }
+
+    /// Pushes text into the device clipboard (without triggering a paste).
+    public func setClipboard(_ text: String) {
+        let capped = Self.truncatedUTF8(text, maxBytes: 200_000)
+        guard !capped.isEmpty else { return }
+        sendControl(
+            ScrcpyControlMessage.setClipboard(
+                text: capped,
+                paste: false,
+                sequence: 0
+            )
+        )
+        #if DEBUG
+        print("[clipboard] sent \(capped.count) chars to \(device.serial)")
+        #endif
+    }
+
+    private static func truncatedUTF8(_ text: String, maxBytes: Int) -> String {
+        guard text.utf8.count > maxBytes else { return text }
+        var result = String()
+        result.reserveCapacity(maxBytes)
+        var used = 0
+        for scalar in text.unicodeScalars {
+            let scalarString = String(scalar)
+            let bytes = scalarString.utf8.count
+            if used + bytes > maxBytes { break }
+            result.append(scalarString)
+            used += bytes
+        }
+        return result
     }
 
     public func tap(x: Int, y: Int) {

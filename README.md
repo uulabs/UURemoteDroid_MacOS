@@ -26,7 +26,10 @@ into the capture (macOS window capture excludes that GPU layer).*
   middle-click for Home.
 - Real keyboard input, including Unicode text, modifiers, arrows, Enter, Tab,
   Backspace, Escape and media/navigation keys.
-- `⌘V` pastes the Mac clipboard into the focused Android field.
+- Shared text clipboard: copy on one device and paste on another, or copy on
+  the Mac and paste on a device. Device copies also update the Mac clipboard.
+- `⌘V` sets the device clipboard and pastes the Mac clipboard into the focused
+  Android field.
 - Drag files onto the mirror to send them to `/sdcard/Download`.
 - Drop an `.apk` (or use **Install APK**) to install it with `adb install -r`.
 - Device navigation buttons: Back, Home, Recents, volume, power, rotate and
@@ -119,6 +122,10 @@ swift test --filter IntegrationTests
    which phones/emulators appear in the wall. Click any tile to make it active;
    the active device receives the control dock and file drops. Right-click a
    tile to focus it, restart its stream, or hide it from the wall.
+7. Clipboard sync is on by default. Text copied on any mirrored device updates
+   the Mac clipboard and every other live device; text copied on the Mac is
+   pushed to all live devices. Turn it off in **Settings → Clipboard**. Only
+   text is synchronised — images and files are not.
 
 ### Keyboard
 
@@ -126,7 +133,7 @@ swift test --filter IntegrationTests
 | --- | --- |
 | Printable characters / Unicode | Injected as text |
 | Return, Tab, Escape, arrows, Home/End, Page Up/Down, Delete | Android key events |
-| `⌘V` | Paste the Mac clipboard as text |
+| `⌘V` | Set the device clipboard from the Mac and paste it |
 | `⌘O` | Send files |
 | `⌘⇧O` | Install an APK |
 | `⌘⇧S` | Screenshot |
@@ -194,7 +201,8 @@ source, icon, bundled scrcpy server and license are versioned.
 - Only **H.264** video is used. That is the compatible default for all Android
   devices supported by scrcpy; audio, camera and virtual-display modes are out
   of scope.
-- Clipboard sync is Mac → Android only. Android → Mac copy is not yet wired up.
+- Clipboard sync is text-only. It covers Mac ↔ device and device ↔ device while enabled;
+  images and file contents are not transferred.
 - `adb` is not bundled; Android platform-tools must already be installed.
 - The ad-hoc signature is fine locally. Sharing outside this Mac requires
   Developer ID signing and notarisation.

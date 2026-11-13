@@ -131,6 +131,61 @@ final class ProtocolTests: XCTestCase {
         ]))
     }
 
+    func testSetClipboardMessageWireFormat() {
+        let data = ScrcpyControlMessage.setClipboard(
+            text: "hi",
+            paste: true,
+            sequence: 0x0102_0304_0506_0708
+        )
+        XCTAssertEqual(data, Data([
+            9,
+            1, 2, 3, 4, 5, 6, 7, 8,
+            1,
+            0, 0, 0, 2,
+            0x68, 0x69,
+        ]))
+    }
+
+    func testDeviceClipboardMessage() throws {
+        let (readFD, writeFD, closePair) = try makeSocketPair()
+        defer { closePair() }
+        var data = Data([0])
+        data.appendBigEndian(UInt32(5))
+        data.append(Data("hello".utf8))
+        try write(data, to: writeFD)
+        XCTAssertEqual(try ScrcpyDeviceMessageReader.readNext(fd: readFD), .clipboard("hello"))
+    }
+
+    func testDeviceClipboardAckMessage() throws {
+        let (readFD, writeFD, closePair) = try makeSocketPair()
+        defer { closePair() }
+        var data = Data([1])
+        data.appendBigEndian(UInt64(42))
+        try write(data, to: writeFD)
+        XCTAssertEqual(try ScrcpyDeviceMessageReader.readNext(fd: readFD), .clipboardAck(42))
+    }
+
+    func testDeviceUhidMessageIsParsedAndDrained() throws {
+        let (readFD, writeFD, closePair) = try makeSocketPair()
+        defer { closePair() }
+        var data = Data([2])
+        data.appendBigEndian(UInt16(3))
+        data.appendBigEndian(UInt16(2))
+        data.append(Data([0xAB, 0xCD]))
+        try write(data, to: writeFD)
+        XCTAssertEqual(
+            try ScrcpyDeviceMessageReader.readNext(fd: readFD),
+            .uhidOutput(id: 3, data: Data([0xAB, 0xCD]))
+        )
+    }
+
+    func testUnknownDeviceMessageThrows() throws {
+        let (readFD, writeFD, closePair) = try makeSocketPair()
+        defer { closePair() }
+        try write(Data([99]), to: writeFD)
+        XCTAssertThrowsError(try ScrcpyDeviceMessageReader.readNext(fd: readFD))
+    }
+
     func testSamsungSafeServerCommandLength() {
         let command = ScrcpyCommand.serverCommand(scid: 0x1234_5678, configuration: .balanced)
         XCTAssertLessThan(command.utf8.count, 256)
@@ -159,6 +214,15 @@ final class ProtocolTests: XCTestCase {
         let units = [Data([0x67, 0x42]), Data([0x68, 0xCE])]
         let converted = H264NALParser.avccSample(from: units)
         XCTAssertEqual(converted, Data([0, 0, 0, 2, 0x67, 0x42, 0, 0, 0, 2, 0x68, 0xCE]))
+    }
+
+    private func makeSocketPair() throws -> (Int32, Int32, () -> Void) {
+        var fds: [Int32] = [0, 0]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
+        return (fds[0], fds[1], {
+            Darwin.close(fds[0])
+            Darwin.close(fds[1])
+        })
     }
 
     private func makeReader() throws -> ((reader: ScrcpyStreamReader, writeFD: Int32), () -> Void) {

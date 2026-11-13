@@ -19,6 +19,7 @@ struct SettingsView: View {
                         adbSection
                         streamSection
                         filesSection
+                        clipboardSection
                         aboutSection
                     }
                     .padding(18)
@@ -216,6 +217,31 @@ struct SettingsView: View {
                         .padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.035)))
                 }
+            }
+        }
+    }
+
+    private var clipboardSection: some View {
+        settingsCard(title: "Clipboard", subtitle: "Share copied text between this Mac and your devices") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: $model.clipboardSyncEnabled) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Sync clipboard across devices")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                        Text("Copy on one device and paste on another, or copy on the Mac and paste on a device.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.textFaint)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Theme.accent)
+
+                Text("Text only. While enabled, text copied on this Mac is sent to every live device, and text copied on a device updates the Mac clipboard.")
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(Theme.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -37,6 +37,7 @@ public enum ScrcpyProtocolError: LocalizedError {
     case invalidHeader
     case packetTooLarge(UInt32)
     case unsupportedCodec(String)
+    case unknownDeviceMessage(UInt8)
 
     public var errorDescription: String? {
         switch self {
@@ -44,6 +45,7 @@ public enum ScrcpyProtocolError: LocalizedError {
         case .invalidHeader: return "Invalid scrcpy stream header"
         case .packetTooLarge(let size): return "Video packet too large (\(size) bytes)"
         case .unsupportedCodec(let value): return "Unsupported video codec “\(value)”"
+        case .unknownDeviceMessage(let type): return "Unknown scrcpy device message type \(type)"
         }
     }
 }
@@ -436,5 +438,48 @@ extension Data {
     mutating func appendBigEndian<T: FixedWidthInteger>(_ value: T) {
         var bigEndian = value.bigEndian
         Swift.withUnsafeBytes(of: &bigEndian) { append(contentsOf: $0) }
+    }
+}
+
+
+// MARK: - Device messages (control socket, device -> computer)
+
+public enum ScrcpyDeviceMessage: Equatable {
+    case clipboard(String)
+    case clipboardAck(UInt64)
+    case uhidOutput(id: UInt16, data: Data)
+}
+
+public enum ScrcpyDeviceMessageReader {
+    private static let clipboardMaxLength = 1 << 18
+
+    public static func readNext(fd: Int32) throws -> ScrcpyDeviceMessage {
+        let typeData = try SocketIO.readExactly(fd: fd, count: 1)
+        let type = typeData[0]
+        switch type {
+        case 0:
+            let lengthData = try SocketIO.readExactly(fd: fd, count: 4)
+            var length = 0
+            for byte in lengthData { length = (length << 8) | Int(byte) }
+            guard length <= clipboardMaxLength else {
+                throw ScrcpyProtocolError.packetTooLarge(UInt32(length))
+            }
+            let textData = try SocketIO.readExactly(fd: fd, count: length)
+            let text = String(decoding: textData, as: UTF8.self)
+            return .clipboard(text)
+        case 1:
+            let sequenceData = try SocketIO.readExactly(fd: fd, count: 8)
+            var sequence: UInt64 = 0
+            for byte in sequenceData { sequence = (sequence << 8) | UInt64(byte) }
+            return .clipboardAck(sequence)
+        case 2:
+            let header = try SocketIO.readExactly(fd: fd, count: 4)
+            let id = (UInt16(header[0]) << 8) | UInt16(header[1])
+            let size = Int((UInt16(header[2]) << 8) | UInt16(header[3]))
+            let data = try SocketIO.readExactly(fd: fd, count: size)
+            return .uhidOutput(id: id, data: data)
+        default:
+            throw ScrcpyProtocolError.unknownDeviceMessage(type)
+        }
     }
 }
