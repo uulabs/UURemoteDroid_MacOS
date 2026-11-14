@@ -72,7 +72,7 @@ struct SidebarView: View {
         HStack(spacing: 11) {
             AppMark(size: 38)
             VStack(alignment: .leading, spacing: 2) {
-                Text("RemoteDroid")
+                Text("UU RemoteDroid")
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.text)
                 Text("ADB DEVICE CONSOLE")

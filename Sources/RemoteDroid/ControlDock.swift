@@ -156,8 +156,11 @@ private struct DockButtons: View {
                 ) {
                     session.toggleScreen()
                 }
-                DockButton(symbol: "rotate.right", help: "Rotate device", enabled: enabled) {
+                DockButton(symbol: "rotate.right", help: "Rotate device (right-click to turn auto-rotate back on)", enabled: enabled) {
                     session.rotate()
+                }
+                .contextMenu {
+                    Button("Turn auto-rotate back on") { session.restoreAutoRotate() }
                 }
                 DockButton(symbol: "bell", help: "Open notifications", enabled: enabled) {
                     session.expandNotifications()

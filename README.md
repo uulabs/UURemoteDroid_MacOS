@@ -1,14 +1,14 @@
-# RemoteDroid
+# UU RemoteDroid
 
 A native macOS front end for **scrcpy**, built for phones and emulators that
 are connected to this Mac over ADB.
 
-RemoteDroid talks to the official `scrcpy-server` directly, decodes the H.264
+UU RemoteDroid talks to the official `scrcpy-server` directly, decodes the H.264
 video with **VideoToolbox**, and injects real mouse, keyboard and touch events
 back through scrcpy's control channel. It does not need a separately installed
 `scrcpy` app.
 
-![RemoteDroid](docs/preview.png)
+![UU RemoteDroid](docs/preview.png)
 
 *Preview: the app interface with the real hardware-decoded video plane composited
 into the capture (macOS window capture excludes that GPU layer).*
@@ -28,7 +28,7 @@ into the capture (macOS window capture excludes that GPU layer).*
   wall header turns every wall phone on or off at once.
 - Streams heal themselves: if the scrcpy server stops, the stream goes silent
   while the phone is awake, ADB stops answering, or the Mac wakes from sleep,
-  RemoteDroid reconnects that device automatically with a short backoff.
+  UU RemoteDroid reconnects that device automatically with a short backoff.
 - Hardware-decoded H.264 at 60 fps by default, with optional native resolution,
   Display/120 fps and 8–48 Mbps presets.
 - Full mouse control: tap, drag/swipe, scroll, right-click for Back and
@@ -54,7 +54,7 @@ into the capture (macOS window capture excludes that GPU layer).*
 ## Requirements
 
 - macOS 14 Sonoma or later.
-- Android platform-tools (`adb`). RemoteDroid looks in the usual SDK,
+- Android platform-tools (`adb`). UU RemoteDroid looks in the usual SDK,
   Homebrew and `PATH` locations; you can also choose the executable in
   **Settings → ADB**.
 - USB debugging enabled and authorised on each phone, or a running Android
@@ -67,23 +67,23 @@ into the capture (macOS window capture excludes that GPU layer).*
 The built disk image is:
 
 ```
-dist/RemoteDroid.dmg
+dist/UU RemoteDroid.dmg
 ```
 
-Open it, drag **RemoteDroid** to **Applications**, then launch it from
+Open it, drag **UU RemoteDroid** to **Applications**, then launch it from
 Applications. The app is ad-hoc signed for this Mac; it is not notarised for
 distribution outside this machine.
 
 If you run it directly from a network/external volume, macOS LaunchServices may
 refuse to open it. Copy it to Applications (or run the executable in
-`RemoteDroid.app/Contents/MacOS/`) instead.
+`UU RemoteDroid.app/Contents/MacOS/`) instead.
 
 ## Build from source
 
 ```bash
 cd "/Volumes/970P/UULabs/UU RemoteDroid"
-make app          # release app -> dist/RemoteDroid.app
-make dmg          # dist/RemoteDroid.dmg
+make app          # release app -> dist/UU RemoteDroid.app
+make dmg          # dist/UU RemoteDroid.dmg
 make test         # protocol/parser/geometry unit tests
 ```
 
@@ -153,7 +153,7 @@ swift test --filter IntegrationTests
 | `⌘1` / `⌘2` | Single device / Device Wall |
 | `⌘,` | Settings |
 
-Click a mirror first so RemoteDroid owns the keyboard. The dock will show
+Click a mirror first so UU RemoteDroid owns the keyboard. The dock will show
 **Keyboard active**. Right-click on the mirror sends Back; middle-click sends
 Home. Scrolling uses Android scroll events at the pointer location.
 
@@ -185,8 +185,8 @@ macOS app
 
 ## Files and paths
 
-- App: `dist/RemoteDroid.app`
-- DMG: `dist/RemoteDroid.dmg`
+- App: `dist/UU RemoteDroid.app`
+- DMG: `dist/UU RemoteDroid.dmg`
 - Bundled server: `Resources/scrcpy-server-v5.0.1`
 - Source: `Sources/RemoteDroidCore` (protocol, ADB, session, video) and
   `Sources/RemoteDroid` (SwiftUI interface)

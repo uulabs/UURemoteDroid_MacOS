@@ -51,28 +51,12 @@ extension Color {
 struct AppMark: View {
     var size: CGFloat = 36
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                .fill(Theme.brandGradient)
-                .overlay(
-                    RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                        .stroke(Color.white.opacity(0.24), lineWidth: 1)
-                )
-                .shadow(color: Theme.accent.opacity(0.22), radius: size * 0.45, y: size * 0.18)
-
-            Image(systemName: "iphone.gen3")
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(Color(hex: 0x071016))
-                .offset(x: -size * 0.025, y: 0)
-
-            Circle()
-                .fill(Color(hex: 0x071016))
-                .frame(width: size * 0.13, height: size * 0.13)
-                .overlay(Circle().stroke(Color.white.opacity(0.55), lineWidth: 1))
-                .offset(x: size * 0.25, y: -size * 0.23)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        // The bundled app icon, so the sidebar matches the Dock.
+        Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 

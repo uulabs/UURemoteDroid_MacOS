@@ -15,7 +15,7 @@ dmg: app
 	./scripts/package-dmg.sh
 
 icon:
-	python3 scripts/make-icon.py
+	./scripts/make-icon.sh
 
 clean:
 	rm -rf .build dist

@@ -54,6 +54,7 @@ struct RemoteDroidApp: App {
                 Button("Power / Lock") { model.activeSession?.pressPower() }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
                 Button("Rotate Display") { model.activeSession?.rotate() }
+                Button("Turn Auto-Rotate Back On") { model.activeSession?.restoreAutoRotate() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Open Notifications") { model.activeSession?.expandNotifications() }
                 Divider()

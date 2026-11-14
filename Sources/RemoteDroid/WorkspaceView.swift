@@ -167,7 +167,7 @@ private struct WorkspaceHeader: View {
         if let device = model.selectedDevice {
             return device.displayName
         }
-        return "RemoteDroid"
+        return "UU RemoteDroid"
     }
 
     private var subtitle: String {

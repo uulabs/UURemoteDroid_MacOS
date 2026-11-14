@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>RemoteDroid</string>
+    <string>UU RemoteDroid</string>
     <key>CFBundleExecutable</key>
     <string>RemoteDroid</string>
     <key>CFBundleIconFile</key>
@@ -15,11 +15,11 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>RemoteDroid</string>
+    <string>UU RemoteDroid</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.4.4</string>
+    <string>1.5.0</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleSupportedPlatforms</key>
@@ -27,7 +27,7 @@
         <string>MacOSX</string>
     </array>
     <key>CFBundleVersion</key>
-    <string>12</string>
+    <string>13</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>

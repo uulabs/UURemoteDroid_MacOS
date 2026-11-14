@@ -522,6 +522,9 @@ private struct WallTile: View {
                 Divider()
                 Button("Turn screen on") { session.setScreen(on: true) }
                 Button("Turn screen off") { session.setScreen(on: false) }
+                Divider()
+                Button("Rotate") { session.rotate() }
+                Button("Turn auto-rotate back on") { session.restoreAutoRotate() }
             }
             Divider()
             Button("Move left") {

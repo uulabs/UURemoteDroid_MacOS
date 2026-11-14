@@ -798,7 +798,29 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     public func pressPower() { press(AndroidKey.power) }
     public func pressVolumeUp() { press(AndroidKey.volumeUp) }
     public func pressVolumeDown() { press(AndroidKey.volumeDown) }
-    public func rotate() { sendControl(ScrcpyControlMessage.rotateDevice()) }
+    /// Rotates between portrait and landscape. Uses ADB rather than scrcpy's
+    /// rotate message, which undoes itself when auto-rotate is on. Apps that
+    /// only allow portrait (lock screen, many launchers) will not turn.
+    public func rotate() {
+        let size = videoSize
+        let landscapeNow = size.width > size.height
+        let adb = self.adb
+        let serial = device.serial
+        Task { [weak self] in
+            do {
+                try await adb.lockRotation(landscape: !landscapeNow, serial: serial)
+            } catch {
+                // Very old Android: fall back to scrcpy's own message.
+                self?.sendControl(ScrcpyControlMessage.rotateDevice())
+            }
+        }
+    }
+
+    public func restoreAutoRotate() {
+        let adb = self.adb
+        let serial = device.serial
+        Task { try? await adb.restoreAutoRotate(serial: serial) }
+    }
     public func expandNotifications() { sendControl(ScrcpyControlMessage.expandNotificationPanel()) }
     public func collapsePanels() { sendControl(ScrcpyControlMessage.collapsePanels()) }
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRATCH="${REMOTEDROID_BUILD_DIR:-$ROOT/.build}"
-APP="$ROOT/dist/RemoteDroid.app"
+APP="$ROOT/dist/UU RemoteDroid.app"
 BUNDLE="$APP/Contents"
 PLIST="$ROOT/Support/Info.plist"
 

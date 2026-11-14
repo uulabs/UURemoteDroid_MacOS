@@ -125,6 +125,29 @@ public final class ADBClient: @unchecked Sendable {
         return .unknown
     }
 
+    /// Locks the device to portrait (rotation 0) or landscape (rotation 1).
+    /// This turns the phone's auto-rotate off; otherwise the sensor would
+    /// immediately rotate it back, which is why scrcpy's own rotate message
+    /// appears to do nothing on phones with auto-rotate enabled.
+    public func lockRotation(landscape: Bool, serial: String) async throws {
+        let rotation = landscape ? 1 : 0
+        _ = try await run(
+            ["-s", serial, "shell",
+             "cmd window user-rotation lock \(rotation) 2>/dev/null || " +
+             "{ settings put system accelerometer_rotation 0; settings put system user_rotation \(rotation); }"],
+            timeout: 8
+        )
+    }
+
+    /// Turns the phone's auto-rotate back on.
+    public func restoreAutoRotate(serial: String) async throws {
+        _ = try await run(
+            ["-s", serial, "shell",
+             "cmd window user-rotation free 2>/dev/null || settings put system accelerometer_rotation 1"],
+            timeout: 8
+        )
+    }
+
     public func shell(_ command: String, serial: String, timeout: TimeInterval = 20) async throws -> String {
         try await run(["-s", serial, "shell", command], timeout: timeout)
     }

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/dist/RemoteDroid.app"
-DMG="${1:-$ROOT/dist/RemoteDroid.dmg}"
+APP="$ROOT/dist/UU RemoteDroid.app"
+DMG="${1:-$ROOT/dist/UU RemoteDroid.dmg}"
 STAGING="${REMOTEDROID_DMG_STAGING:-$ROOT/.build/dmg-staging}"
 
 if [[ ! -d "$APP" ]]; then
@@ -22,12 +22,12 @@ esac
 
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
-cp -R "$APP" "$STAGING/RemoteDroid.app"
+cp -R "$APP" "$STAGING/UU RemoteDroid.app"
 ln -s /Applications "$STAGING/Applications"
 mkdir -p "$(dirname "$DMG")"
 rm -f "$DMG"
 hdiutil create \
-  -volname "RemoteDroid" \
+  -volname "UU RemoteDroid" \
   -srcfolder "$STAGING" \
   -ov \
   -format UDZO \
