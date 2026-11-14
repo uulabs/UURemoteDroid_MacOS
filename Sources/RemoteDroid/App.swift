@@ -6,6 +6,13 @@ struct RemoteDroidApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
+    init() {
+        #if DEBUG
+        // Keep debug logs current when stdout is redirected to a file.
+        setvbuf(stdout, nil, _IOLBF, 0)
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -132,10 +139,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// A Dock click always brings the main window forward: restore it if it
+    /// is minimised and raise it above other apps' windows.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            sender.windows.first?.makeKeyAndOrderFront(nil)
+        let window = sender.windows.first { $0.canBecomeMain && $0.contentView != nil }
+            ?? sender.windows.first
+        if let window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
         }
-        return true
+        sender.activate(ignoringOtherApps: true)
+        return false
     }
 }

@@ -149,8 +149,12 @@ private struct DockButtons: View {
                 DockButton(symbol: "speaker.plus", help: "Volume up", enabled: enabled) {
                     session.pressVolumeUp()
                 }
-                DockButton(symbol: "power", help: "Power / lock", enabled: enabled) {
-                    session.pressPower()
+                DockButton(
+                    symbol: "power",
+                    help: session.screenOn == false ? "Turn the phone screen on" : "Turn the phone screen off",
+                    enabled: enabled
+                ) {
+                    session.toggleScreen()
                 }
                 DockButton(symbol: "rotate.right", help: "Rotate device", enabled: enabled) {
                     session.rotate()

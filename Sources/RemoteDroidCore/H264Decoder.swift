@@ -21,6 +21,11 @@ public final class H264VideoDecoder {
     public var onFrameDecoded: (() -> Void)?
     public var onError: ((String) -> Void)?
     public var onSizeChanged: ((CGSize) -> Void)?
+    /// Called (on the decode queue) when the decoder is waiting for an IDR
+    /// frame and the session should ask the device for one. Without this a
+    /// static screen can stay frozen indefinitely, because scrcpy only sends
+    /// keyframes on demand or when the picture changes.
+    public var onNeedsKeyframe: (() -> Void)?
 
     private var sps: Data?
     private var pps: [Data] = []
@@ -136,16 +141,29 @@ public final class H264VideoDecoder {
             return
         }
 
-        if failed || displayLayer.status == .failed {
-            displayLayer.flushAndRemoveImage()
+        if failed || displayLayer.status == .failed || displayLayer.requiresFlushToResumeDecoding {
+            // The layer can silently stop decoding after a display sleep,
+            // screen lock, GPU switch or window-server hiccup. It then needs a
+            // flush and a fresh IDR frame; otherwise the tile stays frozen.
+            #if DEBUG
+            print("[decoder \(debugLabel)] recovering layer status=\(displayLayer.status.rawValue) requiresFlush=\(displayLayer.requiresFlushToResumeDecoding) error=\(displayLayer.error?.localizedDescription ?? "none")")
+            #endif
+            layerLock.lock()
+            displayLayer.flush()
+            layerLock.unlock()
+            failed = false
             self.formatDescription = nil
             rebuildFormatDescription()
             needsKeyframe = true
             guard self.formatDescription != nil else { return }
-            if !isKeyFrame { return }
+            if !isKeyFrame {
+                onNeedsKeyframe?()
+                return
+            }
         }
 
         if needsKeyframe, !isKeyFrame {
+            onNeedsKeyframe?()
             return
         }
         needsKeyframe = false

@@ -205,6 +205,17 @@ private struct WorkspaceHeader: View {
                     WallDevicePicker()
                         .environmentObject(model)
                 }
+
+                Menu {
+                    Button("Turn all screens on") { model.setAllScreens(on: true) }
+                    Button("Turn all screens off") { model.setAllScreens(on: false) }
+                } label: {
+                    Label("Screens", systemImage: "power")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Turn every phone screen on the wall on or off")
             }
 
             LabelButton(

@@ -109,6 +109,10 @@ final class AppModel: ObservableObject {
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
     private var lastSyncedClipboard: String?
     private var recentClipboardWrites: [String: (text: String, at: Date)] = [:]
+    /// Automatic reconnect bookkeeping for streams that dropped.
+    private var reconnectState: [String: (attempts: Int, next: Date)] = [:]
+    /// Streams the user closed on purpose; these are not reconnected.
+    private var userClosedSerials: Set<String> = []
     #if DEBUG
     private var didStartDebugGrid = false
     #endif
@@ -164,6 +168,22 @@ final class AppModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.stopAll()
+            }
+        }
+        // After the Mac sleeps, locks or switches user, USB/ADB links and
+        // the video layers may be stale. Check every stream right away.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+        ] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    self?.sessions.values.forEach { $0.probeNow() }
+                    self?.refreshNow()
+                }
             }
         }
     }
@@ -337,6 +357,7 @@ final class AppModel: ObservableObject {
             }
 
             handleSelectionChange()
+            recoverSessions()
             if layoutMode == .grid, !didRestoreGrid, !readyDevices.isEmpty {
                 didRestoreGrid = true
                 ensureWallSessions()
@@ -411,6 +432,87 @@ final class AppModel: ObservableObject {
         didInitialAutoConnect = true
     }
 
+    // MARK: - Automatic recovery
+
+    /// Restarts streams that failed (device restarted scrcpy, USB hiccup,
+    /// adb server restart, Mac sleep) with a short backoff, and recreates wall
+    /// streams that were dropped while a device was briefly offline.
+    private func recoverSessions() {
+        let now = Date()
+        for (serial, session) in sessions {
+            guard let device = device(for: serial), device.isReady else { continue }
+            switch session.phase {
+            case .live:
+                reconnectState[serial] = nil
+            case .failed:
+                guard var state = reconnectState[serial] else {
+                    reconnectState[serial] = (0, now.addingTimeInterval(2))
+                    continue
+                }
+                guard now >= state.next else { continue }
+                state.attempts += 1
+                let delay = min(30, 3 * pow(2, Double(min(state.attempts, 4))))
+                state.next = now.addingTimeInterval(delay)
+                reconnectState[serial] = state
+                #if DEBUG
+                print("[recover] reconnecting \(serial) attempt \(state.attempts)")
+                #endif
+                restartSession(serial: serial, device: device)
+            case .idle, .connecting:
+                break
+            }
+        }
+        for serial in reconnectState.keys where sessions[serial] == nil {
+            reconnectState.removeValue(forKey: serial)
+        }
+
+        let wanted: [AndroidDevice]
+        if layoutMode == .grid {
+            wanted = wallDevices
+        } else if autoConnectOnLaunch, let selected = selectedDevice {
+            wanted = [selected]
+        } else {
+            wanted = []
+        }
+        for device in wanted where device.isReady
+            && sessions[device.serial] == nil
+            && !userClosedSerials.contains(device.serial) {
+            ensureSession(for: device)
+        }
+    }
+
+    private func restartSession(serial: String, device: AndroidDevice) {
+        sessions[serial]?.stop()
+        sessions.removeValue(forKey: serial)
+        ensureSession(for: device)
+    }
+
+    // MARK: - Screen power
+
+    func setScreen(on: Bool, serial: String) {
+        sessions[serial]?.setScreen(on: on)
+    }
+
+    func toggleScreen(serial: String) {
+        sessions[serial]?.toggleScreen()
+    }
+
+    /// Turns every live wall screen (or, in single mode, every live
+    /// session) on or off.
+    func setAllScreens(on: Bool) {
+        let serials = layoutMode == .grid ? wallDevices.map(\.serial) : Array(sessions.keys)
+        for serial in serials {
+            guard let session = sessions[serial], session.phase.isLive else { continue }
+            session.setScreen(on: on)
+        }
+        showToast(
+            icon: on ? "sun.max.fill" : "moon.fill",
+            title: on ? "Screens on" : "Screens off",
+            detail: nil,
+            isError: false
+        )
+    }
+
     // MARK: - Sessions
 
     func selectDevice(_ serial: String) {
@@ -437,6 +539,7 @@ final class AppModel: ObservableObject {
 
     func ensureSession(for device: AndroidDevice) {
         guard device.isReady else { return }
+        userClosedSerials.remove(device.serial)
         if let existing = sessions[device.serial] {
             if case .failed = existing.phase {
                 return
@@ -476,6 +579,8 @@ final class AppModel: ObservableObject {
     }
 
     func closeSession(for serial: String) {
+        userClosedSerials.insert(serial)
+        reconnectState.removeValue(forKey: serial)
         sessions[serial]?.stop()
         sessions.removeValue(forKey: serial)
     }

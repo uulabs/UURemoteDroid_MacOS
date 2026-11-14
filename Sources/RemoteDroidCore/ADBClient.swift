@@ -83,6 +83,11 @@ public final class ADBClient: @unchecked Sendable {
 
     public func listDevices() async throws -> [AndroidDevice] {
         let output = try await run(["devices", "-l"], timeout: 15)
+        // A truncated or empty reply is a failed scan, not "no devices";
+        // treating it as empty would tear down every live stream.
+        guard output.contains("List of devices attached") else {
+            throw ADBError("adb returned an unexpected device list", output: output)
+        }
         return ADBOutputParser.parseDevices(output)
     }
 
@@ -97,6 +102,27 @@ public final class ADBClient: @unchecked Sendable {
         } catch {
             return nil
         }
+    }
+
+    public enum ScreenState: Sendable, Equatable {
+        case awake
+        case asleep
+        case unknown
+    }
+
+    /// Reads the device's power state. Returns nil when the device does not
+    /// answer at all, which means its ADB link is no longer usable.
+    public func screenState(serial: String, timeout: TimeInterval = 6) async -> ScreenState? {
+        guard let output = try? await run(
+            ["-s", serial, "shell", "dumpsys power | grep -m1 mWakefulness=; echo uu-ok"],
+            timeout: timeout
+        ) else {
+            return nil
+        }
+        guard output.contains("uu-ok") else { return nil }
+        if output.contains("mWakefulness=Awake") { return .awake }
+        if output.contains("mWakefulness=Asleep") || output.contains("mWakefulness=Dozing") { return .asleep }
+        return .unknown
     }
 
     public func shell(_ command: String, serial: String, timeout: TimeInterval = 20) async throws -> String {
@@ -229,6 +255,7 @@ public final class ADBClient: @unchecked Sendable {
             let data = fileHandle.availableData
             guard !data.isEmpty else {
                 fileHandle.readabilityHandler = nil
+                try? fileHandle.close()
                 return
             }
             let text = String(decoding: data, as: UTF8.self)
@@ -241,7 +268,17 @@ public final class ADBClient: @unchecked Sendable {
             onLog(text)
         }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            handle.readabilityHandler = nil
+            try? handle.close()
+            try? pipe.fileHandleForWriting.close()
+            throw error
+        }
+        // The child has its own copy of the write end; ours would keep the
+        // pipe open (and leak a descriptor) for as long as the app runs.
+        try? pipe.fileHandleForWriting.close()
 
         let stop: @Sendable () -> Void = {
             handle.readabilityHandler = nil
@@ -278,14 +315,23 @@ public final class ADBClient: @unchecked Sendable {
                 onOutput?(data)
             }
 
-            let finish: @Sendable (Int32) -> Void = { status in
+            let finish: @Sendable (Process) -> Void = { terminated in
                 guard state.markFinished() else { return }
+                let status = terminated.terminationStatus
                 handle.readabilityHandler = nil
                 state.timeoutWorkItem?.cancel()
-                let remaining = handle.readDataToEndOfFile()
-                if !remaining.isEmpty {
+                // Break the process -> handler -> state -> timeout -> process
+                // cycle so the Process and its pipe are released.
+                state.timeoutWorkItem = nil
+                terminated.terminationHandler = nil
+                let remaining = (try? handle.readToEnd()) ?? nil
+                if let remaining, !remaining.isEmpty {
                     state.append(remaining)
                 }
+                // Every adb call used to leak this pipe. After a few hours of
+                // device scans and screen checks the app ran out of file
+                // descriptors and could no longer start adb at all.
+                try? handle.close()
                 if state.timedOut {
                     continuation.resume(throwing: ADBError("ADB command timed out", output: state.output))
                 } else {
@@ -294,21 +340,25 @@ public final class ADBClient: @unchecked Sendable {
             }
 
             process.terminationHandler = { terminated in
-                finish(terminated.terminationStatus)
+                finish(terminated)
             }
 
             do {
                 try process.run()
             } catch {
                 state.markFinished()
+                process.terminationHandler = nil
                 handle.readabilityHandler = nil
+                try? handle.close()
+                try? pipe.fileHandleForWriting.close()
                 continuation.resume(throwing: ADBError("Could not launch adb: \(error.localizedDescription)"))
                 return
             }
+            try? pipe.fileHandleForWriting.close()
 
-            let timeoutWork = DispatchWorkItem {
+            let timeoutWork = DispatchWorkItem { [weak process] in
                 state.markTimedOut()
-                if process.isRunning {
+                if let process, process.isRunning {
                     process.terminate()
                 }
             }

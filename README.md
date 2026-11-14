@@ -20,8 +20,15 @@ into the capture (macOS window capture excludes that GPU layer).*
   use **Device Wall** (`⌘2`) to see up to six selected screens in a 3 × 2 wall.
 - A **Choose** picker controls exactly which devices appear in the wall. The
   selection is remembered between launches; any subset from one to six works.
-- Drag a wall tile by its header grip to reorder devices left-to-right. The
-  order is remembered; right-click a tile for **Move left** / **Move right**.
+- Drag a wall tile by its header (grip, name and status) onto another tile to
+  reorder the wall. The order is remembered; right-click a tile for
+  **Move left** / **Move right**.
+- A power button on every wall tile (and in the dock) turns that phone's
+  screen on or off; it is green while the screen is on. **Screens** in the
+  wall header turns every wall phone on or off at once.
+- Streams heal themselves: if the scrcpy server stops, the stream goes silent
+  while the phone is awake, ADB stops answering, or the Mac wakes from sleep,
+  RemoteDroid reconnects that device automatically with a short backoff.
 - Hardware-decoded H.264 at 60 fps by default, with optional native resolution,
   Display/120 fps and 8–48 Mbps presets.
 - Full mouse control: tap, drag/swipe, scroll, right-click for Back and
@@ -219,7 +226,8 @@ source, icon, bundled scrcpy server and license are versioned.
 - Entering/exiting native fullscreen triggers an automatic display-layer refresh
   and a fresh keyframe so the fullscreen surface resumes drawing. Keyboard focus
   is returned to the viewer at the same time.
-- If a stream ever stalls, use the **More** menu → **Refresh video** (or
+- A stalled stream is detected and reconnected automatically (see above). A
+  phone whose screen is off is not treated as stalled. To force it, use the **More** menu → **Refresh video** (or
   right-click a wall tile → **Restart this stream**). These request a new
   encoder config/keyframe without dropping the device session.
 - Some Samsung firmware (notably One UI 7 / Android 15) aborts the scrcpy

@@ -23,6 +23,8 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     @Published public private(set) var bitrateMbps: Double = 0
     @Published public private(set) var totalFrames: UInt64 = 0
     @Published public private(set) var transportError: String?
+    /// The phone's own screen: true = on, false = off/asleep, nil = unknown.
+    @Published public private(set) var screenOn: Bool?
 
     /// Called on the main thread when the device changes its clipboard.
     public var onClipboardText: ((String) -> Void)?
@@ -53,11 +55,38 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     private var lastDisplayRefresh = Date.distantPast
 
     private var frameCounter = 0
+    /// Running frame total, guarded by counterLock. The @Published
+    /// totalFrames copy is only ever written on the main thread: writing a
+    /// published property from the video queue makes SwiftUI lay out on that
+    /// queue and wait for the main thread, which deadlocks against the stats
+    /// timer waiting for counterLock (the app then hangs with a beachball).
+    private var frameTotal: UInt64 = 0
     private var byteCounter = 0
     #if DEBUG
     private var mediaPacketCount = 0
     #endif
     private var statsTimer: Timer?
+
+    // Stream health. All of these are touched on the main thread except
+    // lastPacketAt / lastKeyframeRequest, which are guarded by their locks.
+    private var lastPacketAt = Date()
+    private var lastKeyframeRequest = Date.distantPast
+    private var probeSentAt: Date?
+    private var livenessCheckInFlight = false
+    private var lastScreenCheck = Date.distantPast
+    private var screenPollInFlight = false
+    private var screenPollFailures = 0
+    /// How often the phone's real screen state is read over ADB. Some phones
+    /// keep sending their lock screen after the panel turns off, so frame
+    /// activity cannot tell whether the screen is on.
+    private static let screenPollInterval: TimeInterval = 4
+    /// Seconds without any video packet before the session asks for a fresh
+    /// keyframe to prove the stream is still alive.
+    private static let silenceBeforeProbe: TimeInterval = 10
+    /// Seconds a probe may go unanswered before the device is checked.
+    private static let probeTimeout: TimeInterval = 6
+    /// A session that has not produced video by then is restarted.
+    private static let startDeadline: TimeInterval = 60
 
     private let startQueue = DispatchQueue(label: "au.com.uulabs.remotedroid.start")
     private let videoQueue = DispatchQueue(label: "au.com.uulabs.remotedroid.video", qos: .userInteractive)
@@ -130,6 +159,15 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         Task { [weak self] in
             await self?.launch(run: run)
         }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.startDeadline) { [weak self] in
+            guard let self, self.isActive(run) else { return }
+            if self.phase != .live || self.videoSize == .zero {
+                let log = self.lastServerLog()
+                let message = "Timed out starting the stream." + (log.isEmpty ? "" : "\n\n\(log)")
+                self.teardown(phase: .failed(message), reason: message)
+            }
+        }
     }
 
     public func stop() {
@@ -201,6 +239,8 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
             }
             self.statsTimer?.invalidate()
             self.statsTimer = nil
+            self.probeSentAt = nil
+            self.livenessCheckInFlight = false
             self.phase = phase
             self.fps = 0
             self.bitrateMbps = 0
@@ -248,6 +288,20 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
                 self.serverProcess = spawned.process
                 self.serverStop = spawned.stop
             }
+            // If the scrcpy server (or the adb shell carrying it) ends, the
+            // stream cannot recover on its own. Fail the run so the app can
+            // reconnect instead of showing a frozen frame or a spinner.
+            spawned.process.terminationHandler = { [weak self] process in
+                guard let self, self.isActive(run) else { return }
+                let status = process.terminationStatus
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self, self.isActive(run) else { return }
+                    let log = self.lastServerLog()
+                    let detail = "The scrcpy server on the device stopped (exit \(status))."
+                    let message = log.isEmpty ? detail : "\(detail)\n\n\(log)"
+                    self.teardown(phase: .failed(message), reason: message)
+                }
+            }
 
             guard isActive(run) else {
                 spawned.stop()
@@ -290,6 +344,9 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
             }
             decoder.onSizeChanged = { [weak self] size in
                 self?.handleVideoSize(size, run: run)
+            }
+            decoder.onNeedsKeyframe = { [weak self] in
+                self?.requestKeyframe()
             }
             decoder.onError = { [weak self] message in
                 guard let self else { return }
@@ -435,12 +492,15 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         DispatchQueue.main.async {
             guard self.isActive(run) else { return }
             if self.phase != .live {
+                self.noteVideoActivity()
+                self.probeSentAt = nil
                 self.phase = .live
                 self.transportError = nil
                 self.startStatsTimer(run: run)
                 #if DEBUG
                 print("[session] live \(self.device.serial) \(Int(self.videoSize.width))x\(Int(self.videoSize.height))")
                 #endif
+                self.refreshScreenState(after: 0.5)
                 self.onLive?()
             }
         }
@@ -464,20 +524,178 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
     private func recordFrame() {
         counterLock.lock()
         frameCounter += 1
-        totalFrames += 1
+        frameTotal += 1
         counterLock.unlock()
     }
 
     private func recordBytes(_ count: Int) {
         counterLock.lock()
         byteCounter += count
+        lastPacketAt = Date()
         counterLock.unlock()
+    }
+
+    private func noteVideoActivity() {
+        counterLock.lock()
+        lastPacketAt = Date()
+        counterLock.unlock()
+    }
+
+    private func secondsSinceLastPacket() -> TimeInterval {
+        counterLock.lock()
+        let last = lastPacketAt
+        counterLock.unlock()
+        return Date().timeIntervalSince(last)
+    }
+
+    /// Asks the device for a new encoder config + IDR frame, at most once
+    /// every 1.5 s. Safe to call from any thread.
+    public func requestKeyframe() {
+        stateLock.lock()
+        let now = Date()
+        let allowed = now.timeIntervalSince(lastKeyframeRequest) > 1.5
+        if allowed { lastKeyframeRequest = now }
+        stateLock.unlock()
+        guard allowed else { return }
+        sendControl(ScrcpyControlMessage.resetVideo())
+    }
+
+    // MARK: - Watchdog
+
+    /// Runs once a second on the main thread while live. scrcpy sends nothing
+    /// while the picture is static, so silence alone is not a failure. After a
+    /// quiet spell the session asks for a keyframe; a healthy stream answers
+    /// within a second. If it does not, ADB is asked whether the phone screen
+    /// is simply off. A device that does not answer, or that is awake but
+    /// still silent, has a dead stream and the run is failed so it reconnects.
+    private func checkHealth(run: UUID) {
+        guard isActive(run), phase.isLive else { return }
+        let silence = secondsSinceLastPacket()
+        let now = Date()
+
+        if let sent = probeSentAt {
+            if silence < now.timeIntervalSince(sent) {
+                probeSentAt = nil
+                return
+            }
+            guard now.timeIntervalSince(sent) >= Self.probeTimeout, !livenessCheckInFlight else { return }
+            livenessCheckInFlight = true
+            let adb = self.adb
+            let serial = device.serial
+            Task { [weak self] in
+                let state = await adb.screenState(serial: serial)
+                await MainActor.run {
+                    self?.finishLivenessCheck(state, run: run)
+                }
+            }
+            return
+        }
+
+        if !screenPollInFlight, now.timeIntervalSince(lastScreenCheck) >= Self.screenPollInterval {
+            pollScreenState(run: run)
+        }
+        guard silence >= Self.silenceBeforeProbe else { return }
+        if screenOn == false, now.timeIntervalSince(lastScreenCheck) < 30 {
+            return
+        }
+        probeSentAt = now
+        sendControl(ScrcpyControlMessage.resetVideo())
+        #if DEBUG
+        print("[watchdog …\(device.serial.suffix(8))] \(Int(silence))s quiet, probing with a keyframe request")
+        #endif
+    }
+
+    /// Checks the stream right away, e.g. after the Mac wakes from sleep:
+    /// asks for a keyframe and reconnects if nothing comes back.
+    public func probeNow() {
+        guard phase.isLive, probeSentAt == nil, !livenessCheckInFlight else { return }
+        probeSentAt = Date()
+        lastScreenCheck = .distantPast
+        sendControl(ScrcpyControlMessage.resetVideo())
+    }
+
+    private func finishLivenessCheck(_ state: ADBClient.ScreenState?, run: UUID) {
+        livenessCheckInFlight = false
+        guard isActive(run) else { return }
+        // The stream answered while ADB was being asked.
+        if let sent = probeSentAt, secondsSinceLastPacket() < Date().timeIntervalSince(sent) {
+            probeSentAt = nil
+            return
+        }
+        probeSentAt = nil
+        lastScreenCheck = Date()
+        #if DEBUG
+        print("[watchdog …\(device.serial.suffix(8))] probe unanswered, screen=\(String(describing: state))")
+        #endif
+        switch state {
+        case .asleep, .unknown:
+            // Nothing is drawn while the screen is off; keep the session.
+            screenOn = false
+        case .awake:
+            let message = "The video stream stopped responding. Reconnecting…"
+            teardown(phase: .failed(message), reason: message)
+        case nil:
+            let message = "The device stopped responding over ADB. Reconnecting…"
+            teardown(phase: .failed(message), reason: message)
+        }
+    }
+
+    private func pollScreenState(run: UUID) {
+        screenPollInFlight = true
+        let adb = self.adb
+        let serial = device.serial
+        Task { [weak self] in
+            let state = await adb.screenState(serial: serial)
+            await MainActor.run {
+                guard let self else { return }
+                self.screenPollInFlight = false
+                self.lastScreenCheck = Date()
+                guard self.isActive(run), self.phase.isLive else { return }
+                switch state {
+                case .awake:
+                    self.screenPollFailures = 0
+                    if self.screenOn != true { self.screenOn = true }
+                case .asleep:
+                    self.screenPollFailures = 0
+                    if self.screenOn != false { self.screenOn = false }
+                case .unknown:
+                    self.screenPollFailures = 0
+                case nil:
+                    // Two unanswered polls in a row: the ADB link is gone.
+                    self.screenPollFailures += 1
+                    if self.screenPollFailures >= 2 {
+                        self.screenPollFailures = 0
+                        let message = "The device stopped responding over ADB. Reconnecting…"
+                        self.teardown(phase: .failed(message), reason: message)
+                    }
+                }
+            }
+        }
+    }
+
+    private func refreshScreenState(after delay: TimeInterval) {
+        let adb = self.adb
+        let serial = device.serial
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let state = await adb.screenState(serial: serial) else { return }
+            await MainActor.run {
+                guard let self, self.phase.isLive else { return }
+                self.lastScreenCheck = Date()
+                switch state {
+                case .awake: self.screenOn = true
+                case .asleep: self.screenOn = false
+                case .unknown: break
+                }
+            }
+        }
     }
 
     private func resetCounters() {
         counterLock.lock()
         frameCounter = 0
         byteCounter = 0
+        frameTotal = 0
         counterLock.unlock()
         DispatchQueue.main.async {
             self.totalFrames = 0
@@ -489,6 +707,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self, self.isActive(run) else { return }
             self.sampleStats()
+            self.checkHealth(run: run)
         }
         RunLoop.main.add(timer, forMode: .common)
         statsTimer = timer
@@ -505,7 +724,7 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
         fps = Double(frames)
         bitrateMbps = Double(bytes * 8) / 1_000_000
         counterLock.lock()
-        let total = totalFrames
+        let total = frameTotal
         counterLock.unlock()
         totalFrames = total
         #if DEBUG
@@ -585,6 +804,24 @@ public final class ScrcpySession: ObservableObject, Identifiable, @unchecked Sen
 
     public func setDisplayPower(on: Bool) {
         sendControl(ScrcpyControlMessage.setDisplayPower(on: on))
+    }
+
+    /// Turns the phone's screen on (wake) or off (sleep), like its own
+    /// power button but without toggling ambiguity.
+    public func setScreen(on: Bool) {
+        press(on ? AndroidKey.wakeUp : AndroidKey.sleep)
+        screenOn = on
+        if on {
+            // Ask for a fresh picture as soon as the panel is back.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.requestKeyframe()
+            }
+        }
+        refreshScreenState(after: 1.2)
+    }
+
+    public func toggleScreen() {
+        setScreen(on: screenOn == false)
     }
 
     public func sendText(_ text: String) {

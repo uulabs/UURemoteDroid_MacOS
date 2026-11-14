@@ -1,7 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
-import CoreTransferable
 import RemoteDroidCore
 
 // MARK: - Single-device stage
@@ -79,6 +77,7 @@ private struct ConnectedStage: View {
                             keyboardActive = focused
                         }
                     )
+                    .overlay { ScreenOffOverlay(session: session) }
                 } else {
                     ConnectingSurface(device: device, message: "Starting the video stream")
                 }
@@ -345,6 +344,10 @@ private struct StreamErrorSurface: View {
 
 struct DeviceWallView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var tileFrames: [String: CGRect] = [:]
+    @State private var dragSerial: String?
+    @State private var dragOffset: CGSize = .zero
+    @State private var dropTarget: String?
 
     var body: some View {
         GeometryReader { proxy in
@@ -378,11 +381,7 @@ struct DeviceWallView: View {
             } else if devices.count <= 4 {
                 HStack(spacing: 12) {
                     ForEach(devices) { device in
-                        WallTile(
-                            device: device,
-                            session: model.session(for: device.serial),
-                            isActive: model.selectedSerial == device.serial
-                        )
+                        tile(for: device)
                     }
                 }
                 .padding(16)
@@ -391,12 +390,8 @@ struct DeviceWallView: View {
                 let tileHeight = max(190, (proxy.size.height - 32 - 12) / 2)
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(devices) { device in
-                        WallTile(
-                            device: device,
-                            session: model.session(for: device.serial),
-                            isActive: model.selectedSerial == device.serial
-                        )
-                        .frame(height: tileHeight)
+                        tile(for: device)
+                            .frame(height: tileHeight)
                     }
                 }
                 .padding(16)
@@ -404,18 +399,78 @@ struct DeviceWallView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(devices) { device in
-                            WallTile(
-                                device: device,
-                                session: model.session(for: device.serial),
-                                isActive: model.selectedSerial == device.serial
-                            )
-                            .frame(width: 260)
+                            tile(for: device)
+                                .frame(width: 260)
                         }
                     }
                     .padding(16)
                 }
             }
         }
+        .onPreferenceChange(WallTileFrameKey.self) { frames in
+            tileFrames = frames
+        }
+    }
+
+    private func tile(for device: AndroidDevice) -> some View {
+        let serial = device.serial
+        let isDragged = dragSerial == serial
+        return WallTile(
+            device: device,
+            session: model.session(for: serial),
+            isActive: model.selectedSerial == serial,
+            isDragged: isDragged,
+            isDropTarget: dropTarget == serial,
+            onDragChanged: { translation, location in
+                dragChanged(serial: serial, translation: translation, location: location)
+            },
+            onDragEnded: { dragEnded(serial: serial) }
+        )
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: WallTileFrameKey.self,
+                    value: [serial: geometry.frame(in: .global)]
+                )
+            }
+        )
+        .scaleEffect(isDragged ? 1.025 : 1)
+        .opacity(isDragged ? 0.92 : 1)
+        .offset(isDragged ? dragOffset : .zero)
+        .zIndex(isDragged ? 10 : 0)
+    }
+
+    private func dragChanged(serial: String, translation: CGSize, location: CGPoint) {
+        if dragSerial != serial {
+            dragSerial = serial
+            model.selectDevice(serial)
+        }
+        dragOffset = translation
+        let target = tileFrames.first { key, frame in
+            key != serial && frame.contains(location)
+        }?.key
+        if target != dropTarget {
+            withAnimation(.easeOut(duration: 0.12)) { dropTarget = target }
+        }
+    }
+
+    private func dragEnded(serial: String) {
+        let target = dropTarget
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            if let target {
+                model.moveWallDevice(serial, toSlotOf: target)
+            }
+            dragOffset = .zero
+            dragSerial = nil
+            dropTarget = nil
+        }
+    }
+}
+
+private struct WallTileFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
@@ -424,31 +479,16 @@ private struct WallTile: View {
     let device: AndroidDevice
     let session: ScrcpySession?
     let isActive: Bool
-    @State private var isDropTarget = false
+    var isDragged = false
+    var isDropTarget = false
+    var onDragChanged: (CGSize, CGPoint) -> Void = { _, _ in }
+    var onDragEnded: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .contentShape(Rectangle())
-                .help("Drag this header left or right to reorder the wall")
-                .draggable(WallDragPayload(serial: device.serial)) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(device.wallLabel)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Theme.panel)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent.opacity(0.5), lineWidth: 1))
-                    )
-                }
             content
         }
         .background(
@@ -460,7 +500,7 @@ private struct WallTile: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: Color.black.opacity(0.18), radius: 12, y: 8)
+        .shadow(color: Color.black.opacity(isDragged ? 0.45 : 0.18), radius: isDragged ? 22 : 12, y: isDragged ? 14 : 8)
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(isDropTarget ? Theme.accent : Color.clear, lineWidth: 2)
@@ -470,17 +510,6 @@ private struct WallTile: View {
         .onTapGesture {
             model.selectDevice(device.serial)
         }
-        .dropDestination(for: WallDragPayload.self) { payloads, _ in
-            guard let payload = payloads.first else { return false }
-            withAnimation(.easeInOut(duration: 0.18)) {
-                model.moveWallDevice(payload.serial, toSlotOf: device.serial)
-            }
-            return true
-        } isTargeted: { targeted in
-            withAnimation(.easeOut(duration: 0.12)) {
-                isDropTarget = targeted
-            }
-        }
         .contextMenu {
             Button("Focus this device") {
                 model.selectDevice(device.serial)
@@ -488,6 +517,11 @@ private struct WallTile: View {
             }
             Button("Restart this stream") {
                 model.retrySession(for: device.serial)
+            }
+            if let session, session.phase.isLive {
+                Divider()
+                Button("Turn screen on") { session.setScreen(on: true) }
+                Button("Turn screen off") { session.setScreen(on: false) }
             }
             Divider()
             Button("Move left") {
@@ -515,26 +549,42 @@ private struct WallTile: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Theme.textFaint)
-                .help("Drag to reorder")
-            if activeStatusVisible {
-                StatusDot(color: Theme.success, pulsing: true)
+            // The grip, name and status form the drag handle. It is an AppKit
+            // view so the drag reorders tiles instead of moving the window
+            // (the window is movable by its background).
+            HStack(spacing: 7) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(isDragged ? Theme.accent : Theme.textFaint)
+                if activeStatusVisible {
+                    StatusDot(color: Theme.success, pulsing: true)
+                }
+                Text(device.wallLabel)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                if let session {
+                    WallStatus(session: session)
+                }
+                Spacer(minLength: 0)
+                if isActive {
+                    Text("ACTIVE")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .tracking(0.9)
+                        .foregroundStyle(Theme.accent)
+                }
             }
-            Text(device.wallLabel)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 21)
+            .overlay(
+                WallDragHandle(
+                    onClick: { model.selectDevice(device.serial) },
+                    onChanged: onDragChanged,
+                    onEnded: onDragEnded
+                )
+                .help("Drag to reorder the wall")
+            )
             if let session {
-                WallStatus(session: session)
-            }
-            Spacer(minLength: 0)
-            if isActive {
-                Text("ACTIVE")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .tracking(0.9)
-                    .foregroundStyle(Theme.accent)
+                ScreenPowerButton(session: session)
             }
             Button {
                 model.selectDevice(device.serial)
@@ -675,6 +725,7 @@ private struct WallSessionContent: View {
                     session: session,
                     onActivate: { model.selectDevice(device.serial) }
                 )
+                .overlay { ScreenOffOverlay(session: session, compact: true) }
             } else {
                 ConnectingSurface(device: device, message: "Starting video")
             }
@@ -759,14 +810,154 @@ private extension AndroidDevice {
 }
 
 
-private struct WallDragPayload: Codable, Transferable {
-    let serial: String
+// MARK: - Tile drag handle
 
-    static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: .remoteDroidWallDevice)
+/// An AppKit drag surface for a wall tile header. SwiftUI drag gestures in
+/// this window lose the mouse to window dragging, so the handle tracks the
+/// mouse itself and reports the translation and the pointer location in the
+/// window's top-left (SwiftUI global) coordinate space.
+private struct WallDragHandle: NSViewRepresentable {
+    var onClick: () -> Void
+    var onChanged: (CGSize, CGPoint) -> Void
+    var onEnded: () -> Void
+
+    func makeNSView(context: Context) -> WallDragHandleView {
+        let view = WallDragHandleView()
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: WallDragHandleView, context: Context) {
+        update(nsView)
+    }
+
+    private func update(_ view: WallDragHandleView) {
+        view.onClick = onClick
+        view.onChanged = onChanged
+        view.onEnded = onEnded
     }
 }
 
-private extension UTType {
-    static let remoteDroidWallDevice = UTType(exportedAs: "au.com.uulabs.remotedroid.wall-device")
+final class WallDragHandleView: NSView {
+    var onClick: () -> Void = {}
+    var onChanged: (CGSize, CGPoint) -> Void = { _, _ in }
+    var onEnded: () -> Void = {}
+
+    private var startPoint: CGPoint?
+    private var dragging = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: dragging ? .closedHand : .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        startPoint = topLeftPoint(for: event)
+        dragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = startPoint, let point = topLeftPoint(for: event) else { return }
+        let translation = CGSize(width: point.x - start.x, height: point.y - start.y)
+        if !dragging {
+            guard hypot(translation.width, translation.height) >= 4 else { return }
+            dragging = true
+            NSCursor.closedHand.set()
+        }
+        onChanged(translation, point)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            startPoint = nil
+            dragging = false
+            window?.invalidateCursorRects(for: self)
+        }
+        if dragging {
+            onEnded()
+        } else {
+            onClick()
+        }
+    }
+
+    private func topLeftPoint(for event: NSEvent) -> CGPoint? {
+        guard let content = window?.contentView else { return nil }
+        let point = content.convert(event.locationInWindow, from: nil)
+        return CGPoint(x: point.x, y: content.isFlipped ? point.y : content.bounds.height - point.y)
+    }
+}
+
+// MARK: - Screen power
+
+/// Dims a mirror whose phone screen is off. Some phones keep sending their
+/// lock screen after the panel turns off, so the mirror alone can look on.
+/// The dimming lets clicks through to the mirror; the Wake button wakes it.
+struct ScreenOffOverlay: View {
+    @ObservedObject var session: ScrcpySession
+    var compact = false
+
+    var body: some View {
+        if session.screenOn == false {
+            ZStack {
+                Color.black.opacity(0.62)
+                    .allowsHitTesting(false)
+                VStack(spacing: compact ? 8 : 12) {
+                    Image(systemName: "moon.fill")
+                        .font(.system(size: compact ? 20 : 28, weight: .light))
+                        .foregroundStyle(Theme.textMuted)
+                        .allowsHitTesting(false)
+                    Text("Screen off")
+                        .font(.system(size: compact ? 12 : 15, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .allowsHitTesting(false)
+                    Button {
+                        session.setScreen(on: true)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "power")
+                                .font(.system(size: compact ? 9 : 10.5, weight: .bold))
+                            Text("Wake")
+                                .font(.system(size: compact ? 10 : 11.5, weight: .semibold))
+                        }
+                        .foregroundStyle(Color(hex: 0x06100E))
+                        .padding(.horizontal, compact ? 11 : 14)
+                        .frame(height: compact ? 25 : 30)
+                        .background(Capsule().fill(Theme.accent))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Turn the phone screen on")
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+}
+
+/// Turns the phone's own screen on or off. Green when the screen is on.
+struct ScreenPowerButton: View {
+    @ObservedObject var session: ScrcpySession
+    var size: CGFloat = 21
+
+    var body: some View {
+        let isOn = session.screenOn != false
+        Button {
+            session.toggleScreen()
+        } label: {
+            Image(systemName: "power")
+                .font(.system(size: size * 0.45, weight: .bold))
+                .foregroundStyle(isOn ? Theme.success : Theme.textFaint)
+                .frame(width: size, height: size)
+                .background(
+                    RoundedRectangle(cornerRadius: size * 0.26)
+                        .fill(isOn ? Theme.success.opacity(0.12) : Color.white.opacity(0.04))
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!session.phase.isLive)
+        .opacity(session.phase.isLive ? 1 : 0.4)
+        .help(isOn ? "Turn the phone screen off" : "Turn the phone screen on")
+        .accessibilityLabel(isOn ? "Turn screen off" : "Turn screen on")
+    }
 }
