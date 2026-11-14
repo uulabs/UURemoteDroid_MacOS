@@ -851,6 +851,7 @@ final class AppModel: ObservableObject {
         let apks = urls.filter { $0.pathExtension.lowercased() == "apk" }
         var targets = wallDevices
         if targets.isEmpty { targets = readyDevices }
+        fileLog.notice("installOnWall apks=\(apks.count) targets=\(targets.map(\.serial).joined(separator: ","), privacy: .public)")
         guard !apks.isEmpty else { return false }
         guard !targets.isEmpty else {
             showToast(icon: "iphone.slash", title: "No devices on the wall", detail: "Connect a phone before installing.", isError: true)
@@ -956,7 +957,9 @@ final class AppModel: ObservableObject {
         do {
             switch item.kind {
             case .install:
+                fileLog.notice("install start \(item.serial, privacy: .public) \(url.lastPathComponent, privacy: .public)")
                 try await adb.install(apkURL: url, serial: item.serial)
+                fileLog.notice("install ok \(item.serial, privacy: .public)")
                 updateTransfer(item.id) {
                     $0.state = .completed
                     $0.progress = 1
@@ -989,6 +992,7 @@ final class AppModel: ObservableObject {
             }
         } catch {
             let message = friendly(error)
+            fileLog.error("transfer failed \(item.serial, privacy: .public): \(String(describing: error), privacy: .public)")
             updateTransfer(item.id) {
                 $0.state = .failed(message)
                 $0.detail = item.kind == .install

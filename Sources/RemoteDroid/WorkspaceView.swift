@@ -1,6 +1,9 @@
 import SwiftUI
 import AppKit
 import RemoteDroidCore
+import os
+
+let fileLog = Logger(subsystem: "au.com.uulabs.remotedroid", category: "files")
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -56,6 +59,7 @@ struct WorkspaceView: View {
                 }
             }
             .dropDestination(for: URL.self) { urls, _ in
+                fileLog.notice("drop: \(urls.map(\.absoluteString).joined(separator: " "), privacy: .public) layout=\(model.layoutMode.rawValue, privacy: .public) installOnDrop=\(model.installAPKsOnDrop) selected=\(model.selectedSerial ?? "-", privacy: .public) wall=\(model.wallDevices.map(\.serial).joined(separator: ","), privacy: .public) wallDrop=\(wallDrop)")
                 guard !urls.isEmpty, model.selectedDevice?.isReady == true else { return false }
                 if wallDrop {
                     // On the wall, APKs go to every phone at once; other files
