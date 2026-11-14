@@ -112,7 +112,17 @@ let output = CGContext(
     space: space, bitmapInfo: premultipliedLast
 )!
 output.interpolationQuality = .high
-let scale = artwork / Double(max(crop.width, crop.height))
+// macOS 26+ shrinks any icon that is not the standard rounded square onto a
+// white plate. Fill exactly that shape: an 824 px rounded square (corner
+// radius ~185 px) centred on the 1024 canvas, with the artwork covering it.
+let tile = CGRect(x: 100, y: 100, width: artwork, height: artwork)
+output.addPath(CGPath(roundedRect: tile, cornerWidth: 185.4, cornerHeight: 185.4, transform: nil))
+output.clip()
+output.setFillColor(CGColor(red: 0.02, green: 0.03, blue: 0.03, alpha: 1))
+output.fill(tile)
+// Cover, not fit: the artwork's chamfered corners fall inside the rounded
+// corners that the mask removes anyway.
+let scale = artwork / Double(min(crop.width, crop.height))
 let drawWidth = Double(crop.width) * scale
 let drawHeight = Double(crop.height) * scale
 output.draw(crop, in: CGRect(
