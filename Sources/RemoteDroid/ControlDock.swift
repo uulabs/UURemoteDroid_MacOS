@@ -247,7 +247,7 @@ struct TransferStrip: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 7) {
-                ForEach(model.transfers.suffix(4)) { item in
+                ForEach(model.transfers.suffix(8)) { item in
                     TransferChip(item: item) {
                         model.dismissTransfer(item.id)
                     }

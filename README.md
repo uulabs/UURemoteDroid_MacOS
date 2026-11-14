@@ -41,6 +41,8 @@ into the capture (macOS window capture excludes that GPU layer).*
   Android field.
 - Drag files onto the mirror to send them to `/sdcard/Download`.
 - Drop an `.apk` (or use **Install APK**) to install it with `adb install -r`.
+- In grid mode, drop an `.apk` anywhere on the wall to install it on every
+  phone on the wall at once; one toast reports which phones succeeded.
 - Device navigation buttons: Back, Home, Recents, volume, power, rotate and
   notification shade.
 - Screenshot capture.

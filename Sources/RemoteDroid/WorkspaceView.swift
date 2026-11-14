@@ -57,7 +57,16 @@ struct WorkspaceView: View {
             }
             .dropDestination(for: URL.self) { urls, _ in
                 guard !urls.isEmpty, model.selectedDevice?.isReady == true else { return false }
-                model.sendFiles(urls)
+                if wallDrop {
+                    // On the wall, APKs go to every phone at once; other files
+                    // still go to the selected phone's Download folder.
+                    let apks = urls.filter { $0.pathExtension.lowercased() == "apk" }
+                    let others = urls.filter { $0.pathExtension.lowercased() != "apk" }
+                    if !apks.isEmpty { model.installOnWall(apks) }
+                    if !others.isEmpty { model.sendFiles(others) }
+                } else {
+                    model.sendFiles(urls)
+                }
                 return true
             } isTargeted: { targeted in
                 withAnimation(.easeOut(duration: 0.15)) { dropTargeted = targeted }
@@ -101,7 +110,7 @@ struct WorkspaceView: View {
                 Image(systemName: "arrow.down.doc.fill")
                     .font(.system(size: 30, weight: .light))
                     .foregroundStyle(Theme.accent)
-                Text("Drop to send")
+                Text(wallDrop ? "Drop to install on the wall" : "Drop to send")
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundStyle(Theme.text)
                 Text(dropHint)
@@ -113,8 +122,19 @@ struct WorkspaceView: View {
         .transition(.opacity)
     }
 
+    /// The wall installs dropped APKs on every phone, unless the user turned
+    /// off "install APKs on drop" in Settings.
+    private var wallDrop: Bool {
+        model.layoutMode == .grid && model.installAPKsOnDrop && model.selectedDevice?.isReady == true
+    }
+
     private var dropHint: String {
         guard let device = model.selectedDevice else { return "Choose a device first" }
+        if wallDrop {
+            let count = model.wallDevices.isEmpty ? model.readyDevices.count : model.wallDevices.count
+            let phones = count == 1 ? "1 device" : "all \(count) devices"
+            return "APKs install on \(phones) at once · other files go to Download on \(device.displayName)"
+        }
         return "APKs install automatically · other files go to Download on \(device.displayName)"
     }
 }

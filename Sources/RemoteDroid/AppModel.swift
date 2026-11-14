@@ -36,6 +36,8 @@ final class AppModel: ObservableObject {
         let fileName: String
         let serial: String
         let kind: TransferKind
+        /// Set when one drop installs the same APK on several devices.
+        var batch: UUID? = nil
         var progress: Double
         var state: TransferState
         var detail: String
@@ -97,8 +99,17 @@ final class AppModel: ObservableObject {
     private var adb: ADBClient?
     private var adbVersion: String?
     private var monitorTask: Task<Void, Never>?
-    private var transferWorker: Task<Void, Never>?
+    /// One worker per device, so a wall-wide install runs on every phone at once
+    /// while each phone still handles its own files one after another.
+    private var transferWorkers: [String: Task<Void, Never>] = [:]
     private var pendingTransfers: [(url: URL, item: TransferItem)] = []
+    private struct InstallBatch {
+        let fileName: String
+        var pending: Int
+        var installed: [String] = []
+        var failed: [String] = []
+    }
+    private var installBatches: [UUID: InstallBatch] = [:]
     private var toastDismissTask: Task<Void, Never>?
     private var lastDetailRefresh: [String: Date] = [:]
     private var didInitialAutoConnect = false
@@ -710,8 +721,8 @@ final class AppModel: ObservableObject {
         clipboardTimer = nil
         sessions.values.forEach { $0.stop() }
         sessions.removeAll()
-        transferWorker?.cancel()
-        transferWorker = nil
+        transferWorkers.values.forEach { $0.cancel() }
+        transferWorkers.removeAll()
     }
 
     // MARK: - Settings
@@ -833,22 +844,93 @@ final class AppModel: ObservableObject {
         startTransferWorkerIfNeeded()
     }
 
+    /// Installs every APK in `urls` on each device on the wall at the same time.
+    /// Returns false when nothing could be installed (no APKs or no devices).
+    @discardableResult
+    func installOnWall(_ urls: [URL]) -> Bool {
+        let apks = urls.filter { $0.pathExtension.lowercased() == "apk" }
+        var targets = wallDevices
+        if targets.isEmpty { targets = readyDevices }
+        guard !apks.isEmpty else { return false }
+        guard !targets.isEmpty else {
+            showToast(icon: "iphone.slash", title: "No devices on the wall", detail: "Connect a phone before installing.", isError: true)
+            return false
+        }
+        var queued: [(url: URL, item: TransferItem)] = []
+        for apk in apks {
+            let batch = UUID()
+            installBatches[batch] = InstallBatch(fileName: apk.lastPathComponent, pending: targets.count)
+            for device in targets {
+                let item = TransferItem(
+                    fileName: apk.lastPathComponent,
+                    serial: device.serial,
+                    kind: .install,
+                    batch: batch,
+                    progress: 0,
+                    state: .queued,
+                    detail: "Waiting · \(device.displayName)"
+                )
+                queued.append((apk, item))
+            }
+        }
+        transfers.append(contentsOf: queued.map(\.item))
+        trimTransfers()
+        pendingTransfers.append(contentsOf: queued)
+        startTransferWorkerIfNeeded()
+        let phones = targets.count == 1 ? "1 device" : "\(targets.count) devices"
+        let what = apks.count == 1 ? apks[0].lastPathComponent : "\(apks.count) APKs"
+        showToast(icon: "shippingbox.fill", title: "Installing \(what)", detail: "On \(phones) at once", isError: false)
+        return true
+    }
+
     func dismissTransfer(_ id: UUID) {
         transfers.removeAll { $0.id == id }
     }
 
     private func startTransferWorkerIfNeeded() {
-        guard transferWorker == nil, !pendingTransfers.isEmpty else { return }
-        transferWorker = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled, !self.pendingTransfers.isEmpty {
-                let next = self.pendingTransfers.removeFirst()
-                await self.performTransfer(item: next.item, url: next.url)
+        let serials = Set(pendingTransfers.map(\.item.serial))
+        for serial in serials where transferWorkers[serial] == nil {
+            transferWorkers[serial] = Task { [weak self] in
+                guard let self else { return }
+                while !Task.isCancelled,
+                      let index = self.pendingTransfers.firstIndex(where: { $0.item.serial == serial }) {
+                    let next = self.pendingTransfers.remove(at: index)
+                    await self.performTransfer(item: next.item, url: next.url)
+                }
+                self.transferWorkers[serial] = nil
+                if self.pendingTransfers.contains(where: { $0.item.serial == serial }) {
+                    self.startTransferWorkerIfNeeded()
+                }
             }
-            self.transferWorker = nil
-            if !self.pendingTransfers.isEmpty {
-                self.startTransferWorkerIfNeeded()
-            }
+        }
+    }
+
+    /// Records one device's result for a wall-wide install and shows a single
+    /// summary toast once every device has finished.
+    private func finishBatchItem(_ item: TransferItem, deviceName: String, error: String?) {
+        guard let id = item.batch, var batch = installBatches[id] else { return }
+        batch.pending -= 1
+        if error == nil { batch.installed.append(deviceName) } else { batch.failed.append(deviceName) }
+        guard batch.pending <= 0 else {
+            installBatches[id] = batch
+            return
+        }
+        installBatches[id] = nil
+        let total = batch.installed.count + batch.failed.count
+        if batch.failed.isEmpty {
+            showToast(
+                icon: "checkmark.seal.fill",
+                title: "\(batch.fileName) installed",
+                detail: total == 1 ? batch.installed[0] : "On all \(total) devices",
+                isError: false
+            )
+        } else {
+            showToast(
+                icon: "exclamationmark.triangle.fill",
+                title: "Installed on \(batch.installed.count) of \(total)",
+                detail: "Failed: " + batch.failed.joined(separator: ", "),
+                isError: true
+            )
         }
     }
 
@@ -858,11 +940,16 @@ final class AppModel: ObservableObject {
                 $0.state = .failed("Device is no longer available")
                 $0.detail = "Reconnect the device and try again"
             }
+            finishBatchItem(item, deviceName: device(for: item.serial)?.displayName ?? item.serial, error: "unavailable")
             return
         }
         updateTransfer(item.id) {
             $0.state = .running
-            $0.detail = item.kind == .install ? "Installing APK…" : "Sending to Download…"
+            if item.kind == .install {
+                $0.detail = item.batch == nil ? "Installing APK…" : "Installing · \(device.displayName)"
+            } else {
+                $0.detail = "Sending to Download…"
+            }
             $0.progress = item.kind == .install ? 0.2 : 0
         }
 
@@ -875,7 +962,11 @@ final class AppModel: ObservableObject {
                     $0.progress = 1
                     $0.detail = "Installed on \(device.displayName)"
                 }
-                showToast(icon: "checkmark.seal.fill", title: "\(item.fileName) installed", detail: device.displayName, isError: false)
+                if item.batch != nil {
+                    finishBatchItem(item, deviceName: device.displayName, error: nil)
+                } else {
+                    showToast(icon: "checkmark.seal.fill", title: "\(item.fileName) installed", detail: device.displayName, isError: false)
+                }
             case .push:
                 try await adb.push(
                     localURL: url,
@@ -900,7 +991,13 @@ final class AppModel: ObservableObject {
             let message = friendly(error)
             updateTransfer(item.id) {
                 $0.state = .failed(message)
-                $0.detail = item.kind == .install ? "Install failed" : "Transfer failed"
+                $0.detail = item.kind == .install
+                    ? (item.batch == nil ? "Install failed" : "Failed · \(device.displayName)")
+                    : "Transfer failed"
+            }
+            if item.batch != nil {
+                finishBatchItem(item, deviceName: device.displayName, error: message)
+                return
             }
             showToast(
                 icon: "exclamationmark.triangle.fill",
