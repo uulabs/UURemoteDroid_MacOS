@@ -527,6 +527,8 @@ private struct WallTile: View {
                 Button("Turn auto-rotate back on") { session.restoreAutoRotate() }
             }
             Divider()
+            Button("Show logcat") { model.openLogcat(serial: device.serial) }
+            Divider()
             Button("Move left") {
                 withAnimation(.easeInOut(duration: 0.18)) {
                     model.moveWallDevice(device.serial, by: -1)

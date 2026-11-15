@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import RemoteDroidCore
 
 @main
 struct RemoteDroidApp: App {
@@ -58,6 +59,10 @@ struct RemoteDroidApp: App {
                 Button("Turn Auto-Rotate Back On") { model.activeSession?.restoreAutoRotate() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Open Notifications") { model.activeSession?.expandNotifications() }
+                Divider()
+                Button("Show Logcat") { model.openLogcat() }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                    .disabled(model.selectedDevice?.isReady != true)
                 Divider()
                 Button("Refresh Video") {
                     model.activeSession?.refreshDisplaySurface()
@@ -139,6 +144,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateService.shared.start()
         #if DEBUG
         DebugCapture.scheduleIfNeeded()
+        if let serial = ProcessInfo.processInfo.environment["UU_OPEN_LOGCAT"],
+           let adb = ADBClient.resolveADB() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                LogcatWindows.shared.open(serial: serial, deviceName: serial, adb: adb)
+                if let search = ProcessInfo.processInfo.environment["UU_LOGCAT_SEARCH"] {
+                    LogcatWindows.shared.debugSetSearch(serial: serial, search)
+                }
+            }
+        }
         if let raw = ProcessInfo.processInfo.environment["UU_FULLSCREEN_AFTER"],
            let delay = Double(raw) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
@@ -153,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        LogcatWindows.shared.stopAll()
     }
 
     /// A Dock click always brings the main window forward: restore it if it

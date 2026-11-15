@@ -61,7 +61,10 @@ enum DebugCapture {
     }
 
     private static func capture(to path: String) {
-        guard let window = NSApp.windows.first(where: { $0.contentView != nil }),
+        let wanted = ProcessInfo.processInfo.environment["UU_CAPTURE_WINDOW"]
+        guard let window = NSApp.windows.first(where: {
+                  $0.contentView != nil && (wanted == nil || $0.title.hasPrefix(wanted!))
+              }),
               let view = window.contentView else {
             print("[debug-capture] no window")
             return

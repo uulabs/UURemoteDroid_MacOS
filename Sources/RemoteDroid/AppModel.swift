@@ -884,6 +884,20 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    /// Opens (or brings forward) the logcat window for a device.
+    func openLogcat(serial: String? = nil) {
+        guard let serial = serial ?? selectedSerial,
+              let device = device(for: serial), device.isReady else {
+            showToast(icon: "text.alignleft", title: "No active device", detail: "Select a connected device to view its log.", isError: true)
+            return
+        }
+        guard let adb else {
+            showToast(icon: "exclamationmark.triangle.fill", title: "ADB is not ready", detail: "Choose adb in Settings first.", isError: true)
+            return
+        }
+        LogcatWindows.shared.open(serial: serial, deviceName: device.displayName, adb: adb.executableURL)
+    }
+
     func dismissTransfer(_ id: UUID) {
         transfers.removeAll { $0.id == id }
     }

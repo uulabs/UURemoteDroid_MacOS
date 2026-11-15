@@ -268,6 +268,9 @@ private struct WorkspaceHeader: View {
                 Button("Take screenshot") {
                     model.captureScreenshot()
                 }
+                Button("Show logcat") {
+                    model.openLogcat()
+                }
                 Divider()
                 Button("Refresh video") {
                     model.activeSession?.refreshDisplaySurface()

@@ -49,6 +49,12 @@ hardware-decoded video layer.*
 - Device navigation buttons: Back, Home, Recents, volume, power, rotate and
   notification shade.
 - Screenshot capture.
+- **Logcat**: stream a device's log live in its own window (**Device → Show
+  Logcat**, `⌘⇧K`, the **More** menu or a wall tile's right-click menu). Search
+  as you type, combine words with `tag:Name`, `pid:123` and `-exclude`, pick a
+  minimum level, pause, copy selected lines with `⌘C`, or save what's shown as
+  a text file. Scroll up to read back; **Jump to latest** resumes following. It
+  keeps the newest 50,000 lines and stops adb when the window closes.
 - Session statistics: resolution, live frame rate and bitrate.
 - Local-only operation. ADB traffic uses the existing USB/Wi-Fi ADB link and a
   loopback reverse tunnel.
@@ -169,6 +175,7 @@ swift test --filter IntegrationTests
 | `⌘O` | Send files |
 | `⌘⇧O` | Install an APK |
 | `⌘⇧S` | Screenshot |
+| `⌘⇧K` | Show logcat for the selected device |
 | `⌘[` | Back |
 | `⌘⇧H` | Home |
 | `⌘⇧Tab` | Recent apps |
