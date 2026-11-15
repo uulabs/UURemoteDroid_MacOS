@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = StreamConfiguration.balanced
     @State private var didLoad = false
+    @AppStorage(UpdateService.autoCheckDefaultsKey) private var autoUpdateChecks = true
 
     var body: some View {
         ZStack {
@@ -20,6 +21,7 @@ struct SettingsView: View {
                         streamSection
                         filesSection
                         clipboardSection
+                        updatesSection
                         aboutSection
                     }
                     .padding(18)
@@ -247,21 +249,65 @@ struct SettingsView: View {
     }
 
     private var aboutSection: some View {
-        settingsCard(title: "About", subtitle: "UU Labs · RemoteDroid") {
+        settingsCard(title: "About", subtitle: "UU Labs · UU RemoteDroid") {
             VStack(spacing: 8) {
                 aboutRow("Version", value: appVersion)
                 aboutRow("scrcpy server", value: "5.0.1")
                 aboutRow("Decoder", value: "VideoToolbox")
-                aboutRow("License", value: "Apache-2.0 (scrcpy)")
-                HStack {
+                aboutRow("scrcpy licence", value: "Apache-2.0 · © Genymobile, Romain Vimont")
+                HStack(spacing: 12) {
                     Link("scrcpy on GitHub", destination: URL(string: "https://github.com/Genymobile/scrcpy")!)
                         .font(.system(size: 9.5))
                         .foregroundStyle(Theme.accent)
+                    if let license = Bundle.main.url(forResource: "SCRCPY-LICENSE", withExtension: "txt") {
+                        Link("Licence text", destination: license)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    if let notices = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md") {
+                        Link("Third-party notices", destination: notices)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.accent)
+                    }
                     Spacer()
                     Text("Built for macOS")
                         .font(.system(size: 9))
                         .foregroundStyle(Theme.textFaint)
                 }
+            }
+        }
+    }
+
+    private var updatesSection: some View {
+        settingsCard(title: "Updates", subtitle: "New versions come from UU RemoteDroid's GitHub releases") {
+            VStack(spacing: 9) {
+                HStack {
+                    Toggle(isOn: $autoUpdateChecks) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Check for updates automatically")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                            Text("At launch and every six hours. Nothing installs without asking.")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Theme.textFaint)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .tint(Theme.accent)
+                    Spacer()
+                    LabelButton(symbol: "arrow.triangle.2.circlepath", label: "Check Now") {
+                        dismiss()
+                        UpdateService.shared.checkForUpdates(manual: true)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.shield")
+                        .font(.system(size: 9))
+                    Text("Updates are checked against their published SHA-256 and the UULabs signature before installing.")
+                        .font(.system(size: 9))
+                }
+                .foregroundStyle(Theme.textFaint)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

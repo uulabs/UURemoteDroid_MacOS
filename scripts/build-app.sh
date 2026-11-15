@@ -12,7 +12,7 @@ if [[ ! -f "$ROOT/Resources/scrcpy-server-v5.0.1" ]]; then
   exit 1
 fi
 if [[ ! -f "$ROOT/Resources/AppIcon.icns" ]]; then
-  echo "Missing Resources/AppIcon.icns; run scripts/make-icon.py" >&2
+  echo "Missing Resources/AppIcon.icns; run scripts/make-icon.sh" >&2
   exit 1
 fi
 
@@ -37,7 +37,26 @@ printf 'APPL????' > "$BUNDLE/PkgInfo"
 cp "$ROOT/Resources/AppIcon.icns" "$BUNDLE/Resources/AppIcon.icns"
 cp "$ROOT/Resources/scrcpy-server-v5.0.1" "$BUNDLE/Resources/scrcpy-server-v5.0.1"
 cp "$ROOT/Resources/SCRCPY-LICENSE.txt" "$BUNDLE/Resources/SCRCPY-LICENSE.txt"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$BUNDLE/Resources/THIRD_PARTY_NOTICES.md"
 
 plutil -lint "$BUNDLE/Info.plist" >/dev/null
-codesign --force --deep --sign - "$APP" >/dev/null
+
+# Sign with a Developer ID if one is installed, otherwise the UULabs Apple
+# Development certificate. The in-app updater only installs builds whose
+# signature carries the UULabs Team ID, so ad-hoc signing is a last resort for
+# local builds and is refused by scripts/build-release.sh.
+SIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  IDENTITIES="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)"
+  SIGN_IDENTITY="$(printf '%s\n' "$IDENTITIES" | /usr/bin/awk -F'"' '/Developer ID Application:/ {print $2; exit}')"
+  if [[ -z "$SIGN_IDENTITY" ]]; then
+    SIGN_IDENTITY="$(printf '%s\n' "$IDENTITIES" | /usr/bin/awk -F'"' '/Apple Development:/ {print $2; exit}')"
+  fi
+fi
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  echo "warning: no signing identity found; signing ad hoc" >&2
+  SIGN_IDENTITY="-"
+fi
+/usr/bin/codesign --force --deep --sign "$SIGN_IDENTITY" "$APP" >/dev/null
+/usr/bin/codesign --verify --deep --strict "$APP"
 echo "Built $APP"

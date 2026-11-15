@@ -1,4 +1,4 @@
-.PHONY: build test app dmg icon clean
+.PHONY: build test app dmg release icon clean
 
 REMOTEDROID_BUILD_DIR ?= .build
 
@@ -13,6 +13,9 @@ app:
 
 dmg: app
 	./scripts/package-dmg.sh
+
+release:
+	./scripts/build-release.sh
 
 icon:
 	./scripts/make-icon.sh

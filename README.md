@@ -8,10 +8,13 @@ video with **VideoToolbox**, and injects real mouse, keyboard and touch events
 back through scrcpy's control channel. It does not need a separately installed
 `scrcpy` app.
 
-![UU RemoteDroid](docs/preview.png)
+![The device wall: three phones mirrored side by side](docs/screenshot-wall.png)
 
-*Preview: the app interface with the real hardware-decoded video plane composited
-into the capture (macOS window capture excludes that GPU layer).*
+![One phone with the inspector open](docs/screenshot-single.png)
+
+*Screenshots are captures of the app window. Each phone screen is filled in with
+an `adb screencap` of that phone, because a window capture leaves out the
+hardware-decoded video layer.*
 
 ## What it does
 
@@ -64,39 +67,56 @@ into the capture (macOS window capture excludes that GPU layer).*
 - To build: Xcode 16 or later (Swift 6 compiler, Swift 5 language mode) and the
   bundled `Resources/scrcpy-server-v5.0.1`.
 
-## Install the DMG
+## Install
 
-The built disk image is:
+Download `UU-RemoteDroid-<version>.dmg` from the
+[latest release](https://github.com/uulabs/UURemoteDroid_MacOS/releases/latest),
+open it, drag **UU RemoteDroid** to **Applications** and launch it from there.
+Each release also publishes a `.sha256` file for every asset.
 
-```
-dist/UU RemoteDroid.dmg
-```
-
-Open it, drag **UU RemoteDroid** to **Applications**, then launch it from
-Applications. The app is ad-hoc signed for this Mac; it is not notarised for
-distribution outside this machine.
+The app is signed by UULabs but not notarised, so the first launch may need
+**right-click → Open** (or **System Settings → Privacy & Security → Open
+Anyway**).
 
 If you run it directly from a network/external volume, macOS LaunchServices may
 refuse to open it. Copy it to Applications (or run the executable in
 `UU RemoteDroid.app/Contents/MacOS/`) instead.
 
+## Updates
+
+UU RemoteDroid checks GitHub for a newer release shortly after launch and then
+every six hours. When one is available it asks before doing anything; choose
+**Install Update**, **Later** or **Skip This Version**. Before installing, the
+update is:
+
+- downloaded only over HTTPS from this repository's latest stable release;
+- checked against the SHA-256 published beside it;
+- checked for the right bundle identifier and version;
+- checked for a valid code signature from the UULabs team (`V726L7NR7H`).
+
+The app then quits, swaps itself for the new version and reopens. Your devices,
+wall layout and settings are kept. Use **UU RemoteDroid → Check for Updates…**
+to check by hand. Turn automatic checks off in the same menu or in
+**Settings → Updates**.
+
 ## Build from source
 
 ```bash
-cd "/Volumes/970P/UULabs/UU RemoteDroid"
 make app          # release app -> dist/UU RemoteDroid.app
 make dmg          # dist/UU RemoteDroid.dmg
-make test         # protocol/parser/geometry unit tests
+make release      # signed, verified release ZIP + DMG with .sha256 files
+make test         # protocol/parser/geometry/update unit tests
 ```
 
-`make` uses `.build` by default. To keep build scratch on the 970P volume:
+`make` uses `.build` by default; set `REMOTEDROID_BUILD_DIR` to build
+somewhere else. `scripts/build-app.sh` signs with a Developer ID or Apple
+Development certificate when one is installed (override with
+`CODESIGN_IDENTITY`), otherwise ad hoc. `make release` refuses to package a
+build that is not signed by the UULabs team, because the updater would reject
+it. See [RELEASING.md](RELEASING.md) for publishing.
 
-```bash
-REMOTEDROID_BUILD_DIR="/Volumes/970P/UULabs/Scratch/UURemoteDroid/lead/release-build" make app
-```
-
-The app icon is committed as `Resources/AppIcon.icns`. Regenerate it with
-`make icon` using a Python that has Pillow installed.
+The app icon is generated from `Resources/AppIcon-source.webp` with
+`make icon`.
 
 ### Integration smoke tests
 
@@ -114,7 +134,7 @@ UU_INTEGRATION=1 \
 UU_ADB_PATH="$HOME/Library/Android/sdk/platform-tools/adb" \
 UU_ADB_SERIAL=emulator-5554 \
 UU_SCRCPY_SERVER="$PWD/Resources/scrcpy-server-v5.0.1" \
-UU_INTEGRATION_SCRATCH="/Volumes/970P/UULabs/Scratch/UURemoteDroid/lead/push-test" \
+UU_INTEGRATION_SCRATCH="$PWD/.build/push-test" \
 UU_TEST_APK="/path/to/smoketest.apk" \
 swift test --filter IntegrationTests
 ```
@@ -193,20 +213,9 @@ macOS app
 - Source: `Sources/RemoteDroidCore` (protocol, ADB, session, video) and
   `Sources/RemoteDroid` (SwiftUI interface)
 - Tests: `Tests/RemoteDroidCoreTests`
-- Local Git repository: this folder, on `main`, with no remote configured.
-
-## Git flow
-
-This project is already a local Git repository. To publish it later:
-
-```bash
-cd "/Volumes/970P/UULabs/UU RemoteDroid"
-git remote add origin <your-remote-url>
-git push -u origin main
-```
 
 `dist/`, `.build/` and generated app bundles are intentionally ignored; the
-source, icon, bundled scrcpy server and license are versioned.
+source, icon, bundled scrcpy server and its licence are versioned.
 
 ## Limitations and notes
 
@@ -219,8 +228,7 @@ source, icon, bundled scrcpy server and license are versioned.
   visible video surface, so the outgoing view cannot pause a stream whose
   replacement view is already on screen.
 - `adb` is not bundled; Android platform-tools must already be installed.
-- The ad-hoc signature is fine locally. Sharing outside this Mac requires
-  Developer ID signing and notarisation.
+- Releases are signed but not notarised; see **Install** for the first launch.
 - The DMG's app is not sandboxed because it needs to launch `adb` and use local
   sockets.
 - If the device drops off while a session is live, the error banner includes the
@@ -237,8 +245,39 @@ source, icon, bundled scrcpy server and license are versioned.
   server command is intentionally compact (currently 221 bytes at the default
   1080p/60/24 Mbps settings) and a regression test guards that limit.
 
-## Credits
+## Credits and licences
 
-Built for UU Labs. Device capture and control are provided by
-[scrcpy](https://github.com/Genymobile/scrcpy) 5.0.1 (Apache-2.0). The scrcpy
-license is included in `Resources/SCRCPY-LICENSE.txt` and copied into the app.
+Built for UU Labs.
+
+### scrcpy
+
+Device capture and control are provided by
+[scrcpy](https://github.com/Genymobile/scrcpy). UU RemoteDroid bundles the
+official, **unmodified** `scrcpy-server` 5.0.1 binary
+(`Resources/scrcpy-server-v5.0.1`) and implements its own macOS client for
+the scrcpy protocol.
+
+```
+Copyright (C) 2018 Genymobile
+Copyright (C) 2018-2026 Romain Vimont
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+The full Apache License 2.0 text is in
+[`Resources/SCRCPY-LICENSE.txt`](Resources/SCRCPY-LICENSE.txt). Every app build
+carries it, together with [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md),
+in `UU RemoteDroid.app/Contents/Resources/`. Both are linked from
+**UU RemoteDroid → About UU RemoteDroid** and **Settings → About**.
+scrcpy is a project of Genymobile and Romain Vimont; UU RemoteDroid is not
+affiliated with or endorsed by them.

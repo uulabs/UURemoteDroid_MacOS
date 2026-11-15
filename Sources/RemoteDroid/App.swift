@@ -5,6 +5,7 @@ import AppKit
 struct RemoteDroidApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+    @AppStorage(UpdateService.autoCheckDefaultsKey) private var autoUpdateChecks = true
 
     init() {
         #if DEBUG
@@ -105,6 +106,19 @@ struct RemoteDroidApp: App {
                 .disabled(model.readyDevices.count < 2)
             }
 
+            CommandGroup(replacing: .appInfo) {
+                Button("About UU RemoteDroid") {
+                    AboutPanel.show()
+                }
+            }
+
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    UpdateService.shared.checkForUpdates(manual: true)
+                }
+                Toggle("Automatically Check for Updates", isOn: $autoUpdateChecks)
+            }
+
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
                     model.showSettings = true
@@ -122,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        UpdateService.shared.start()
         #if DEBUG
         DebugCapture.scheduleIfNeeded()
         if let raw = ProcessInfo.processInfo.environment["UU_FULLSCREEN_AFTER"],
